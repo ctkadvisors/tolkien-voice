@@ -45,7 +45,7 @@ async def test_start_uses_exact_private_docker_contract(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     install_fake_token(settings)
     runner = FakeCommandRunner()
-    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([404]))
+    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([200]))
 
     await runtime.start()
 
@@ -81,7 +81,7 @@ async def test_start_uses_exact_private_docker_contract(tmp_path: Path) -> None:
 async def test_start_creates_only_runtime_directories(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     install_fake_token(settings)
-    runtime = PersonaPlexRuntime(settings, runner=FakeCommandRunner(), http=FakeHttpClient([404]))
+    runtime = PersonaPlexRuntime(settings, runner=FakeCommandRunner(), http=FakeHttpClient([200]))
 
     await runtime.start()
 
@@ -182,7 +182,7 @@ async def test_stop_is_idempotent(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     install_fake_token(settings)
     runner = FakeCommandRunner()
-    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([404]))
+    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([200]))
     await runtime.start()
 
     await runtime.stop()

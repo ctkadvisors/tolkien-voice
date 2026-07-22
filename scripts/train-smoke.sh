@@ -48,3 +48,10 @@ adapter="$run_root/checkpoints/checkpoint_000001/consolidated/lora.safetensors"
 }
 sha256sum "$adapter" >"$run_root/adapter.sha256"
 chmod 0600 "$run_root/adapter.sha256"
+PYTHONPATH="$repository/src" python -m tolkien_voice.training.run_metadata \
+  --run-root "$run_root" \
+  --adapter "$adapter" \
+  --base-revision "$(basename "$snapshot")" \
+  --personaplex-revision 3428dfd95309a7f3c84fd93259ded0f810d1ff91 \
+  --moshi-revision 061cc4c630d9e11722e08b7d02b1836ba58f30e8 \
+  --trainer-revision 2acc879fe7c48f885a18f6cc9548bccb2674d87b

@@ -21,8 +21,23 @@ if [[ -z "$HF_TOKEN" ]]; then
 fi
 export HF_TOKEN
 
-exec python -m moshi.server \
-  --host 127.0.0.1 \
-  --port 8998 \
-  --static none \
+readonly pinned_base_revision=fdaf4090a61cb315c138a1faee287ffd6c716309
+base_revision=${TOLKIEN_VOICE_BASE_REVISION:-$pinned_base_revision}
+if [[ "$base_revision" != "$pinned_base_revision" ]]; then
+  echo "PersonaPlex base revision does not match the pinned runtime" >&2
+  exit 78
+fi
+
+server_args=(
+  --host 127.0.0.1
+  --port 8998
+  --static none
   --hf-repo nvidia/personaplex-7b-v1
+)
+if [[ -z "${TOLKIEN_VOICE_LORA_WEIGHT:-}" || -z "${TOLKIEN_VOICE_LORA_SHA256:-}" ]]; then
+  echo "A verified LoRA adapter and SHA-256 are required" >&2
+  exit 78
+fi
+
+export HF_HUB_OFFLINE=1
+exec python /opt/tolkien-runtime/personaplex_runtime.py "${server_args[@]}"

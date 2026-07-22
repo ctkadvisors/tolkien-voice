@@ -27,6 +27,8 @@ RUN python -m pip install --no-cache-dir \
 
 COPY container/entrypoint.sh /usr/local/bin/tolkien-personaplex-entrypoint
 COPY container/healthcheck.py /usr/local/bin/tolkien-personaplex-healthcheck
+COPY container/personaplex_runtime.py /opt/tolkien-runtime/personaplex_runtime.py
+COPY container/personaplex_lora_merge.py /opt/tolkien-runtime/personaplex_lora_merge.py
 RUN chmod 0755 \
       /usr/local/bin/tolkien-personaplex-entrypoint \
       /usr/local/bin/tolkien-personaplex-healthcheck

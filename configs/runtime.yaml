@@ -11,4 +11,5 @@ llama_swap_url: http://127.0.0.1:9090
 lock_path: /run/user/1000/tolkien-voice/big-model.lock
 owner_path: /run/user/1000/tolkien-voice/big-model-owner.json
 data_root: /home/chrisknuteson/tolkien-voice-data
-
+adapter_path: /home/chrisknuteson/tolkien-voice-data/runs/smoke-one-step/checkpoints/checkpoint_000001/consolidated/lora.safetensors
+adapter_metadata_path: /home/chrisknuteson/tolkien-voice-data/runs/smoke-one-step/run-metadata.json

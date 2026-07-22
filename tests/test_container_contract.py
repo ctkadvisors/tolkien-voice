@@ -48,9 +48,9 @@ def test_entrypoint_accepts_a_token_file_without_trailing_newline() -> None:
 def test_healthcheck_does_not_allocate_a_chat() -> None:
     source = HEALTHCHECK.read_text(encoding="utf-8")
 
-    assert "http://127.0.0.1:8998/" in source
+    assert "http://127.0.0.1:8998/api/health" in source
     assert "/api/chat" not in source
-    assert "404" in source
+    assert "response.status == 200" in source
 
 
 def test_build_script_refuses_unreviewed_upstream_revision() -> None:

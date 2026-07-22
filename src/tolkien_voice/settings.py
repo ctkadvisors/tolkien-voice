@@ -30,6 +30,8 @@ class RuntimeSettings(BaseModel):
     lock_path: Path
     owner_path: Path
     data_root: Path
+    adapter_path: Path | None = None
+    adapter_metadata_path: Path | None = None
 
     @field_validator("controller_host")
     @classmethod
@@ -71,4 +73,3 @@ def load_runtime_settings(config_path: str | Path) -> RuntimeSettings:
         raise ValueError(f"runtime config must be a mapping: {path}")
     values = {**raw, **_environment_overrides()}
     return RuntimeSettings.model_validate(values)
-
