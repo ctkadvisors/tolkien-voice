@@ -51,6 +51,13 @@ def validate_rendered_examples(examples: list[RenderedExample]) -> None:
         alignments = payload.get("alignments") if isinstance(payload, dict) else None
         if not isinstance(alignments, list) or not alignments:
             raise ValueError(f"alignment list is empty: {item.id}")
+        system_prompt = payload.get("system_prompt")
+        if (
+            not isinstance(system_prompt, str)
+            or not system_prompt.startswith("<system>")
+            or not system_prompt.endswith("<system>")
+        ):
+            raise ValueError(f"alignment has no runtime system prompt: {item.id}")
 
 
 def write_moshi_manifests(

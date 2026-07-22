@@ -5,6 +5,8 @@ from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
+from .conditioning import build_system_prompt_prefix, system_prompt_tokens
+
 
 def mimi_codebooks_for_config(config: dict[str, Any]) -> int:
     if config.get("model_type") == "personaplex":
@@ -59,6 +61,32 @@ def install_reiterable_eval_loader_patch(upstream_train: Any) -> None:
     upstream_train.build_data_loader = build_data_loader
 
 
+def install_system_prompt_prefix_patch(upstream_train: Any) -> None:
+    """Prepend each runtime character prompt to every training/eval chunk."""
+    original_interleaved_tokenizer = upstream_train.InterleavedTokenizer
+
+    class PromptedInterleavedTokenizer(original_interleaved_tokenizer):
+        def __call__(self, wav: Any, start_sec: float, path: str) -> Any:
+            sample = super().__call__(wav, start_sec, path)
+            tokens = system_prompt_tokens(Path(path).with_suffix(".json"), self.interleaver.tokenizer)
+            rows = build_system_prompt_prefix(
+                num_codebooks=int(sample.codes.shape[1]),
+                prompt_tokens=tokens,
+                zero_token_id=int(self.interleaver.zero_padding),
+            )
+            import torch
+
+            prefix = torch.tensor(
+                [rows],
+                device=sample.codes.device,
+                dtype=sample.codes.dtype,
+            )
+            sample.codes = torch.cat([prefix, sample.codes], dim=2)
+            return sample
+
+    upstream_train.InterleavedTokenizer = PromptedInterleavedTokenizer
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Train a LoRA on the PersonaPlex stereo model")
     parser.add_argument("--config", type=Path, required=True)
@@ -71,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     import train as upstream_train
 
     install_reiterable_eval_loader_patch(upstream_train)
+    install_system_prompt_prefix_patch(upstream_train)
     upstream_train.train(str(args.config))
     return 0
 

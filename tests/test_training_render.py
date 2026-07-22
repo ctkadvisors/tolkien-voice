@@ -62,7 +62,12 @@ def test_render_places_assistant_left_and_user_right(tmp_path: Path) -> None:
     def synthesize(utterance: Utterance, destination: Path) -> None:
         write_mono_tone(destination, amplitude=1000 if utterance.speaker == "user" else 2000)
 
-    rendered = render_blueprint(blueprint(), tmp_path, synthesize=synthesize)
+    rendered = render_blueprint(
+        blueprint(),
+        tmp_path,
+        synthesize=synthesize,
+        system_prompt="<system> Aragorn prompt <system>",
+    )
 
     params, samples = read_stereo(rendered.wav_path)
     assert params.nchannels == 2
@@ -75,6 +80,7 @@ def test_render_places_assistant_left_and_user_right(tmp_path: Path) -> None:
     alignment = json.loads(rendered.alignment_path.read_text())
     assert alignment["alignments"][0][0] == "Walk"
     assert {entry[2] for entry in alignment["alignments"]} == {"SPEAKER_MAIN"}
+    assert alignment["system_prompt"] == "<system> Aragorn prompt <system>"
 
 
 def test_render_resamples_mono_input_to_24khz(tmp_path: Path) -> None:

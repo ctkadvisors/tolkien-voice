@@ -27,7 +27,12 @@ def example(tmp_path: Path, *, item_id: str = "aragorn-normal-0001") -> Rendered
     alignment_path = tmp_path / f"{item_id}.json"
     write_stereo(wav_path)
     alignment_path.write_text(
-        json.dumps({"alignments": [["Walk", [0.1, 0.4], "SPEAKER_MAIN"]]})
+        json.dumps(
+            {
+                "alignments": [["Walk", [0.1, 0.4], "SPEAKER_MAIN"]],
+                "system_prompt": "<system> Aragorn prompt <system>",
+            }
+        )
     )
     return RenderedExample(
         id=item_id,
@@ -83,4 +88,14 @@ def test_manifest_rejects_wrong_sample_rate(tmp_path: Path) -> None:
     write_stereo(item.wav_path, sample_rate=16_000)
 
     with pytest.raises(ValueError, match="24,000"):
+        validate_rendered_examples([item])
+
+
+def test_manifest_rejects_unconditioned_training_example(tmp_path: Path) -> None:
+    item = example(tmp_path)
+    item.alignment_path.write_text(
+        json.dumps({"alignments": [["Walk", [0.1, 0.4], "SPEAKER_MAIN"]]})
+    )
+
+    with pytest.raises(ValueError, match="system prompt"):
         validate_rendered_examples([item])

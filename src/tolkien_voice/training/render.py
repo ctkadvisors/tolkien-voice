@@ -14,6 +14,8 @@ import tempfile
 from typing import Callable
 import wave
 
+from tolkien_voice.characters import CharacterRegistry
+
 from .manifest import write_moshi_manifests
 from .schema import DialogueBlueprint, RenderedExample, TimingKind, Utterance
 
@@ -29,6 +31,7 @@ def render_blueprint(
     output_directory: Path,
     *,
     synthesize: Synthesizer,
+    system_prompt: str | None = None,
 ) -> RenderedExample:
     output_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     with tempfile.TemporaryDirectory(prefix=f".{blueprint.id}-", dir=output_directory) as temp:
@@ -77,6 +80,7 @@ def render_blueprint(
         "timeline": timeline,
         "blueprint_hash": blueprint.canonical_hash,
         "text_conditions": None,
+        "system_prompt": system_prompt,
     }
     temporary_alignment.write_text(json.dumps(alignment_payload, indent=2) + "\n")
     temporary_alignment.chmod(0o600)
@@ -212,6 +216,7 @@ def render_corpus(
     output_directory: Path,
     *,
     synthesizer_for: SynthesizerFactory,
+    system_prompt_for: Callable[[DialogueBlueprint], str] | None = None,
     workers: int = 1,
 ) -> list[RenderedExample]:
     if not blueprints:
@@ -224,6 +229,7 @@ def render_corpus(
             blueprint,
             output_directory / "audio",
             synthesize=synthesizer_for(blueprint),
+            system_prompt=(system_prompt_for(blueprint) if system_prompt_for else None),
         )
 
     if workers == 1:
@@ -256,12 +262,18 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sauron-voice", default="Ralph")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--manifest-audio-root", type=Path)
+    parser.add_argument(
+        "--character-directory",
+        type=Path,
+        default=Path(__file__).parents[3] / "configs" / "characters",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     blueprints = _load_blueprints(args.blueprints)
+    registry = CharacterRegistry.from_directory(args.character_directory)
 
     def synthesizer_for(blueprint: DialogueBlueprint) -> Synthesizer:
         voice = args.aragorn_voice if blueprint.character == "aragorn" else args.sauron_voice
@@ -271,6 +283,7 @@ def main(argv: list[str] | None = None) -> int:
         blueprints,
         args.output_directory,
         synthesizer_for=synthesizer_for,
+        system_prompt_for=lambda blueprint: registry.resolve(blueprint.character).text_prompt,
         workers=args.workers,
     )
     manifests = write_moshi_manifests(
