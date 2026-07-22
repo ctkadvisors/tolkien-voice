@@ -73,31 +73,42 @@ class TeacherClient:
             "seed": seed,
             "response_format": {"type": "json_object"},
         }
-        response: httpx.Response | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
                 response = self._client.post("chat/completions", json=body)
                 response.raise_for_status()
-                break
             except (httpx.TimeoutException, httpx.HTTPStatusError):
                 if attempt == self.max_attempts:
                     raise
-        assert response is not None
-        content = _extract_content(response.json())
-        try:
-            raw = json.loads(content)
-        except (json.JSONDecodeError, TypeError) as error:
-            raise TeacherResponseError("teacher response must be strict JSON without fences") from error
-        raw = _normalize_labels(raw, character)
-        try:
-            dialogue = TeacherDialogue.model_validate(raw)
-        except ValidationError as error:
-            raise TeacherResponseError(f"invalid teacher dialogue: {error}") from error
-        if dialogue.character != character:
-            raise TeacherResponseError(
-                f"teacher answered as {dialogue.character!r}, not the requested character {character!r}"
-            )
-        return dialogue
+                continue
+            try:
+                return _parse_teacher_response(response, character)
+            except TeacherResponseError:
+                if attempt == self.max_attempts:
+                    raise
+        raise AssertionError("teacher retry loop ended unexpectedly")
+
+
+def _parse_teacher_response(response: httpx.Response, character: str) -> TeacherDialogue:
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, TypeError) as error:
+        raise TeacherResponseError("teacher HTTP response must contain JSON") from error
+    content = _extract_content(payload)
+    try:
+        raw = json.loads(content)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise TeacherResponseError("teacher response must be strict JSON without fences") from error
+    raw = _normalize_labels(raw, character)
+    try:
+        dialogue = TeacherDialogue.model_validate(raw)
+    except ValidationError as error:
+        raise TeacherResponseError(f"invalid teacher dialogue: {error}") from error
+    if dialogue.character != character:
+        raise TeacherResponseError(
+            f"teacher answered as {dialogue.character!r}, not the requested character {character!r}"
+        )
+    return dialogue
 
 
 def generate_blueprint(

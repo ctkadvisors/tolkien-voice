@@ -96,6 +96,33 @@ def test_teacher_retry_preserves_seed() -> None:
     assert seeds == [99, 99]
 
 
+def test_teacher_retries_invalid_structured_output_with_same_seed() -> None:
+    seeds: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seeds.append(body["seed"])
+        content = "not-json" if len(seeds) == 1 else json.dumps(response_payload())
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    client = TeacherClient(
+        base_url="http://teacher.test/v1",
+        transport=httpx.MockTransport(handler),
+        max_attempts=2,
+    )
+
+    result = client.generate(
+        character="aragorn",
+        character_prompt="Identity: Aragorn.",
+        scenario="Road counsel.",
+        timing=TimingKind.NORMAL,
+        seed=101,
+    )
+
+    assert result.character == "aragorn"
+    assert seeds == [101, 101]
+
+
 def test_teacher_normalizes_character_name_as_assistant_speaker() -> None:
     payload = response_payload(character="Aragorn")
     payload["utterances"][1]["speaker"] = "aragorn"
