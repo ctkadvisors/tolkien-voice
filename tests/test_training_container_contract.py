@@ -50,6 +50,12 @@ def test_training_script_mounts_hugging_face_blobs_for_snapshot_symlinks() -> No
     assert '--volume "$model_cache/blobs:/blobs:ro"' in script
 
 
+def test_training_script_uses_spark_python_for_run_metadata() -> None:
+    script = (REPOSITORY / "scripts/train-smoke.sh").read_text()
+
+    assert 'PYTHONPATH="$repository/src" python3 -m tolkien_voice.training.run_metadata' in script
+
+
 def test_training_image_builder_accepts_only_git_or_pinned_revision_marker() -> None:
     script = (REPOSITORY / "scripts/build-training-image.sh").read_text()
     marker = (REPOSITORY / "vendor/moshi-finetune-revision.txt").read_text().strip()
