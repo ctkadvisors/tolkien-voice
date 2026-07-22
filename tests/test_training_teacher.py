@@ -169,6 +169,49 @@ def test_teacher_normalizes_reviewed_character_alias_without_accepting_wrong_rol
     assert result.utterances[1].speaker == "assistant"
 
 
+def test_teacher_normalizes_unambiguous_reviewed_character_object() -> None:
+    payload = response_payload(character="sauron")
+    payload["character"] = {"id": "sauron", "name": "Sauron"}
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(payload)}}]},
+        )
+    )
+    client = TeacherClient(base_url="http://teacher.test/v1", transport=transport)
+
+    result = client.generate(
+        character="sauron",
+        character_prompt="Identity: Sauron.",
+        scenario="A petitioner asks about order.",
+        timing=TimingKind.NORMAL,
+        seed=1,
+    )
+
+    assert result.character == "sauron"
+
+
+def test_teacher_rejects_conflicting_character_object() -> None:
+    payload = response_payload(character="sauron")
+    payload["character"] = {"id": "sauron", "name": "Gandalf"}
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(payload)}}]},
+        )
+    )
+    client = TeacherClient(base_url="http://teacher.test/v1", transport=transport)
+
+    with pytest.raises(TeacherResponseError, match="valid string"):
+        client.generate(
+            character="sauron",
+            character_prompt="Identity: Sauron.",
+            scenario="A petitioner asks about order.",
+            timing=TimingKind.NORMAL,
+            seed=1,
+        )
+
+
 def test_teacher_rejects_malformed_json() -> None:
     transport = httpx.MockTransport(
         lambda request: httpx.Response(

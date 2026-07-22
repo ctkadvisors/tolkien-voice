@@ -2,12 +2,28 @@ from __future__ import annotations
 
 from array import array
 import asyncio
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 import wave
 
 
 FRAME_SECONDS = 0.04
+
+
+class ActivityDetector:
+    def __init__(self, *, threshold: float, sustained_frames: int) -> None:
+        if threshold < 0:
+            raise ValueError("threshold must be non-negative")
+        if sustained_frames <= 0:
+            raise ValueError("sustained_frames must be positive")
+        self.threshold = threshold
+        self.sustained_frames = sustained_frames
+        self._active_frames = 0
+
+    def append(self, rms: float) -> bool:
+        self._active_frames = self._active_frames + 1 if rms >= self.threshold else 0
+        return self._active_frames >= self.sustained_frames
 
 
 def load_user_channel(path: Path) -> tuple[int, list[float], float]:
@@ -36,6 +52,32 @@ def summarize_audio_packets(
         "underrun_count": sum(gap > gap_threshold for gap in gaps),
         "max_packet_gap_ms": round(max(gaps, default=0) * 1000),
     }
+
+
+def measure_interruption_response(
+    frames: list[tuple[float, float]],
+    *,
+    barge_in_seconds: float,
+    silence_threshold: float,
+    sustained_frames: int,
+) -> int | None:
+    if sustained_frames <= 0:
+        raise ValueError("sustained_frames must be positive")
+    quiet_started: float | None = None
+    quiet_count = 0
+    for received_seconds, rms in frames:
+        if received_seconds < barge_in_seconds:
+            continue
+        if rms <= silence_threshold:
+            if quiet_started is None:
+                quiet_started = received_seconds
+            quiet_count += 1
+            if quiet_count >= sustained_frames:
+                return round(max(0.0, quiet_started - barge_in_seconds) * 1000)
+        else:
+            quiet_started = None
+            quiet_count = 0
+    return None
 
 
 async def probe_native_session(
@@ -124,4 +166,135 @@ async def probe_native_session(
         "first_audio_ms": round(max(0.0, audio_times[0] - speech_end_seconds) * 1000),
         "audio_duration_ms": round(len(audio_times) * FRAME_SECONDS * 1000),
         "text": "".join(text_parts).strip(),
+    }
+
+
+async def probe_native_interruption(
+    url: str,
+    opening_wav_path: Path,
+    interruption_wav_path: Path,
+    *,
+    max_wait_seconds: float = 12.0,
+    response_seconds: float = 4.0,
+    activity_threshold: float = 0.02,
+    silence_threshold: float = 0.015,
+    raw_audio_path: Path | None = None,
+) -> dict[str, Any]:
+    """Measure how quickly native STS yields after real speech arrives mid-response."""
+    try:
+        import aiohttp
+        import numpy as np
+        import sphn
+    except ImportError as error:
+        raise RuntimeError("native probe requires aiohttp, numpy, and sphn") from error
+
+    opening_rate, opening_samples, _ = load_user_channel(opening_wav_path)
+    interruption_rate, interruption_samples, _ = load_user_channel(interruption_wav_path)
+    if opening_rate != 24_000 or interruption_rate != 24_000:
+        raise ValueError("interruption probe WAVs must be 24 kHz")
+    if max_wait_seconds <= 0 or response_seconds <= 0:
+        raise ValueError("interruption probe timing must be positive")
+
+    sample_rate = opening_rate
+    frame_samples = round(sample_rate * FRAME_SECONDS)
+    loop = asyncio.get_running_loop()
+    output_started = asyncio.Event()
+    output_detector = ActivityDetector(threshold=activity_threshold, sustained_frames=3)
+    output_frames: list[tuple[float, float]] = []
+    audio_bytes = bytearray()
+    barge_in_seconds: float | None = None
+    timeout_seconds = (
+        len(opening_samples) / sample_rate
+        + max_wait_seconds
+        + len(interruption_samples) / sample_rate
+        + response_seconds
+        + 30
+    )
+
+    async with aiohttp.ClientSession() as client:
+        async with client.ws_connect(url, compress=0, max_msg_size=1024 * 1024) as websocket:
+            handshake = await asyncio.wait_for(websocket.receive(), timeout=timeout_seconds)
+            if handshake.type != aiohttp.WSMsgType.BINARY or handshake.data != b"\x00":
+                raise RuntimeError("native STS handshake was not received")
+            started = loop.time()
+            reader = sphn.OpusStreamReader(sample_rate)
+
+            async def receive_output() -> None:
+                while True:
+                    message = await websocket.receive()
+                    if message.type != aiohttp.WSMsgType.BINARY:
+                        if message.type in {
+                            aiohttp.WSMsgType.CLOSE,
+                            aiohttp.WSMsgType.CLOSED,
+                            aiohttp.WSMsgType.ERROR,
+                        }:
+                            return
+                        continue
+                    payload = message.data
+                    if not payload or payload[0] != 1:
+                        continue
+                    received_seconds = loop.time() - started
+                    audio_bytes.extend(payload[1:])
+                    reader.append_bytes(payload[1:])
+                    decoded = np.asarray(reader.read_pcm(), dtype=np.float32).reshape(-1)
+                    for offset in range(0, decoded.size, frame_samples):
+                        frame = decoded[offset : offset + frame_samples]
+                        if frame.size == 0:
+                            continue
+                        rms = float(np.sqrt(np.mean(np.square(frame))))
+                        output_frames.append((received_seconds, rms))
+                        if output_detector.append(rms):
+                            output_started.set()
+
+            receiver = asyncio.create_task(receive_output())
+            writer = sphn.OpusStreamWriter(sample_rate)
+
+            async def send_frame(frame: Any) -> None:
+                writer.append_pcm(np.asarray(frame, dtype=np.float32))
+                payload = writer.read_bytes()
+                if payload:
+                    await websocket.send_bytes(b"\x01" + payload)
+                await asyncio.sleep(FRAME_SECONDS)
+
+            try:
+                for offset in range(0, len(opening_samples), frame_samples):
+                    await send_frame(opening_samples[offset : offset + frame_samples])
+
+                wait_deadline = loop.time() + max_wait_seconds
+                silence = np.zeros(frame_samples, dtype=np.float32)
+                while not output_started.is_set() and loop.time() < wait_deadline:
+                    await send_frame(silence)
+                if not output_started.is_set():
+                    raise RuntimeError("native STS did not speak before interruption timeout")
+
+                for offset in range(0, len(interruption_samples), frame_samples):
+                    frame = interruption_samples[offset : offset + frame_samples]
+                    if barge_in_seconds is None and max((abs(item) for item in frame), default=0) >= 0.01:
+                        barge_in_seconds = loop.time() - started
+                    await send_frame(frame)
+                if barge_in_seconds is None:
+                    raise ValueError("interruption probe contains no audible speech")
+
+                for _ in range(round(response_seconds / FRAME_SECONDS)):
+                    await send_frame(silence)
+            finally:
+                receiver.cancel()
+                with suppress(asyncio.CancelledError):
+                    await receiver
+
+    if raw_audio_path is not None:
+        raw_audio_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        raw_audio_path.write_bytes(audio_bytes)
+        raw_audio_path.chmod(0o600)
+    assert barge_in_seconds is not None
+    return {
+        "interruption_response_ms": measure_interruption_response(
+            output_frames,
+            barge_in_seconds=barge_in_seconds,
+            silence_threshold=silence_threshold,
+            sustained_frames=5,
+        ),
+        "barge_in_ms": round(barge_in_seconds * 1000),
+        "output_activity_frames": len(output_frames),
+        "interruption_audio_bytes": len(audio_bytes),
     }

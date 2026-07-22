@@ -10,7 +10,10 @@ from urllib.parse import urlencode, urlparse, urlunparse
 
 from tolkien_voice.characters import CharacterRegistry
 from tolkien_voice.evaluation import load_persona_manifest
-from tolkien_voice.training.native_probe import probe_native_session
+from tolkien_voice.training.native_probe import (
+    probe_native_interruption,
+    probe_native_session,
+)
 
 
 def websocket_url(server_url: str, *, text_prompt: str, voice_prompt: str) -> str:
@@ -40,6 +43,16 @@ async def collect(args: argparse.Namespace) -> list[dict[str, object]]:
                 response_seconds=args.response_seconds,
                 raw_audio_path=raw_audio,
             )
+            interruption = await probe_native_interruption(
+                url,
+                wav_path,
+                args.interruption_audio,
+                max_wait_seconds=args.interruption_wait_seconds,
+                response_seconds=args.interruption_response_seconds,
+                raw_audio_path=(
+                    args.raw_audio_dir / f"{args.arm}-{probe.id}-interruption.opus"
+                ),
+            )
             rows.append(
                 {
                     "probe_id": probe.id,
@@ -49,6 +62,7 @@ async def collect(args: argparse.Namespace) -> list[dict[str, object]]:
                     "prompt": probe.prompt,
                     "expected_traits": probe.expected_traits,
                     **measured,
+                    **interruption,
                 }
             )
     return rows
@@ -62,11 +76,16 @@ def main() -> int:
     parser.add_argument("--character-dir", type=Path, default=repository / "configs/characters")
     parser.add_argument("--characters", nargs="+", default=["aragorn", "sauron"])
     parser.add_argument("--audio-dir", type=Path, required=True)
+    parser.add_argument("--interruption-audio", type=Path, required=True)
     parser.add_argument("--raw-audio-dir", type=Path, required=True)
     parser.add_argument("--arm", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--response-seconds", type=float, default=12)
+    parser.add_argument("--interruption-wait-seconds", type=float, default=12)
+    parser.add_argument("--interruption-response-seconds", type=float, default=4)
     args = parser.parse_args()
+    if not args.interruption_audio.is_file():
+        parser.error(f"interruption audio does not exist: {args.interruption_audio}")
     rows = asyncio.run(collect(args))
     args.output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = args.output.with_suffix(args.output.suffix + ".tmp")

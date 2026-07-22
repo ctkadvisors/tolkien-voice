@@ -16,6 +16,10 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, default=repository / "evals/persona/probes.yaml")
     parser.add_argument("--characters", nargs="+", default=["aragorn", "sauron"])
     parser.add_argument("--voice", default="Samantha")
+    parser.add_argument(
+        "--interruption-prompt",
+        default="Wait. Stop there. Let me speak.",
+    )
     parser.add_argument("--output-directory", type=Path, required=True)
     args = parser.parse_args()
     manifest = load_persona_manifest(args.manifest)
@@ -28,7 +32,21 @@ def main() -> int:
             synthesizer(Utterance(speaker="user", text=probe.prompt), destination)
             destination.chmod(0o600)
             count += 1
-    print(json.dumps({"prompts": count, "output": str(args.output_directory)}))
+    interruption_destination = args.output_directory / "barge-in.wav"
+    synthesizer(
+        Utterance(speaker="user", text=args.interruption_prompt),
+        interruption_destination,
+    )
+    interruption_destination.chmod(0o600)
+    print(
+        json.dumps(
+            {
+                "prompts": count,
+                "interruption_prompt": str(interruption_destination),
+                "output": str(args.output_directory),
+            }
+        )
+    )
     return 0
 
 

@@ -191,6 +191,16 @@ def _normalize_labels(payload: Any, requested_character: str) -> Any:
     aliases = CHARACTER_ALIASES.get(requested_character, frozenset({requested_character.casefold()}))
     if isinstance(character, str) and _normalize_character_label(character) in aliases:
         normalized["character"] = requested_character
+    elif (
+        isinstance(character, dict)
+        and set(character) == {"id", "name"}
+        and all(isinstance(character[field], str) for field in ("id", "name"))
+        and all(
+            _normalize_character_label(character[field]) in aliases
+            for field in ("id", "name")
+        )
+    ):
+        normalized["character"] = requested_character
     utterances = normalized.get("utterances")
     if isinstance(utterances, list):
         normalized_utterances = []
