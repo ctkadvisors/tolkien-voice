@@ -76,7 +76,7 @@ class JudgeClient:
                 response = self._client.post("chat/completions", json=body)
                 response.raise_for_status()
                 return _parse_score(response.json())
-            except (httpx.TimeoutException, httpx.HTTPStatusError):
+            except (httpx.TransportError, httpx.HTTPStatusError):
                 if attempt == self.max_attempts:
                     raise
             except (JudgeResponseError, json.JSONDecodeError):

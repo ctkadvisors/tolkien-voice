@@ -86,7 +86,7 @@ class TeacherClient:
             try:
                 response = self._client.post("chat/completions", json=body)
                 response.raise_for_status()
-            except (httpx.TimeoutException, httpx.HTTPStatusError):
+            except (httpx.TransportError, httpx.HTTPStatusError):
                 if attempt == self.max_attempts:
                     raise
                 continue
