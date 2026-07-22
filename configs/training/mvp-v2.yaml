@@ -38,4 +38,4 @@ ckpt_freq: 64
 num_ckpt_keep: 4
 save_adapters: true
 overwrite_run_dir: false
-run_dir: /data/runs/mvp-v2-r32-256step-32sec
+run_dir: /data/runs/mvp-v2-r32-256step-32sec-r2

@@ -4,7 +4,7 @@ set -Eeuo pipefail
 readonly repository=/home/chrisknuteson/tolkien-voice
 readonly data_root=/home/chrisknuteson/tolkien-voice-data
 readonly dataset_root="$data_root/datasets/mvp-v1"
-readonly run_name=mvp-v2-r32-256step-32sec
+readonly run_name=mvp-v2-r32-256step-32sec-r2
 readonly run_root="$data_root/runs/$run_name"
 readonly model_cache="$data_root/cache/huggingface/hub/models--nvidia--personaplex-7b-v1"
 readonly final_adapter="$run_root/checkpoints/checkpoint_000256/consolidated/lora.safetensors"

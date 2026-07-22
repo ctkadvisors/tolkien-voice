@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from tolkien_voice.training.personaplex_train import (
+    install_reiterable_eval_loader_patch,
     load_personaplex_mimi,
     mimi_codebooks_for_config,
 )
@@ -33,3 +34,23 @@ def test_load_personaplex_mimi_uses_pinned_moshi_api() -> None:
 
     assert result == "mimi-model"
     assert calls == [("mimi.safetensors", 8, "cuda")]
+
+
+def test_each_checkpoint_gets_a_fresh_finite_eval_loader() -> None:
+    calls: list[bool] = []
+
+    def build_data_loader(*_args, **kwargs):
+        is_eval = kwargs["is_eval"]
+        calls.append(is_eval)
+        return iter([len(calls)])
+
+    upstream_train = SimpleNamespace(build_data_loader=build_data_loader)
+    install_reiterable_eval_loader_patch(upstream_train)
+
+    train_loader = upstream_train.build_data_loader(is_eval=False)
+    eval_loader = upstream_train.build_data_loader(is_eval=True)
+
+    assert list(train_loader) == [1]
+    assert list(eval_loader) == [2]
+    assert list(eval_loader) == [3]
+    assert calls == [False, True, True]

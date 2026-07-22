@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,28 @@ def install_personaplex_mimi_patch() -> None:
     loaders.CheckpointInfo.get_mimi = get_mimi
 
 
+class _ReiterableEvalLoader:
+    def __init__(self, factory: Callable[[], Iterable[Any]]) -> None:
+        self._factory = factory
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(self._factory())
+
+
+def install_reiterable_eval_loader_patch(upstream_train: Any) -> None:
+    """Rebuild the pinned trainer's finite validation iterator for every eval."""
+    original_build_data_loader = upstream_train.build_data_loader
+
+    def build_data_loader(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("is_eval") is not True:
+            return original_build_data_loader(*args, **kwargs)
+        return _ReiterableEvalLoader(
+            lambda: original_build_data_loader(*args, **kwargs)
+        )
+
+    upstream_train.build_data_loader = build_data_loader
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Train a LoRA on the PersonaPlex stereo model")
     parser.add_argument("--config", type=Path, required=True)
@@ -47,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     install_personaplex_mimi_patch()
     import train as upstream_train
 
+    install_reiterable_eval_loader_patch(upstream_train)
     upstream_train.train(str(args.config))
     return 0
 

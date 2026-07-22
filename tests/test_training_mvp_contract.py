@@ -62,7 +62,7 @@ def test_mvp_v2_training_config_uses_longer_context_and_lower_lr() -> None:
     assert payload["ckpt_freq"] == 64
     assert payload["num_ckpt_keep"] >= 4
     assert payload["overwrite_run_dir"] is False
-    assert payload["run_dir"] == "/data/runs/mvp-v2-r32-256step-32sec"
+    assert payload["run_dir"] == "/data/runs/mvp-v2-r32-256step-32sec-r2"
 
 
 def test_mvp_v2_script_audits_and_selects_best_heldout_checkpoint() -> None:
@@ -70,7 +70,7 @@ def test_mvp_v2_script_audits_and_selects_best_heldout_checkpoint() -> None:
 
     assert "set -Eeuo pipefail" in source
     assert 'readonly dataset_root="$data_root/datasets/mvp-v1"' in source
-    assert 'readonly run_name=mvp-v2-r32-256step-32sec' in source
+    assert 'readonly run_name=mvp-v2-r32-256step-32sec-r2' in source
     assert "tolkien_voice.training.audit" in source
     assert "scripts/run-with-big-model-lease.sh" in source
     assert "--network none" in source
