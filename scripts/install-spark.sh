@@ -9,6 +9,7 @@ readonly revision_marker=$install_root/vendor/personaplex-revision.txt
 readonly data_root=/home/chrisknuteson/tolkien-voice-data
 readonly secret_file=$data_root/secrets/hf_token
 readonly patcher=$install_root/scripts/patch-llama-swap-config.py
+export PATH=/home/chrisknuteson/.local/bin:$PATH
 
 if [[ $(id -u) -eq 0 ]]; then
   echo "Install Tolkien Voice as $expected_user, not root." >&2
@@ -36,6 +37,10 @@ preflight_host() {
   command -v flock >/dev/null
   command -v systemctl >/dev/null
   command -v tailscale >/dev/null
+  [[ $(node --version) == v22.* ]] || {
+    echo "Tolkien Voice requires Node 22." >&2
+    return 1
+  }
   nvidia-smi -L >/dev/null
   docker info >/dev/null
 
