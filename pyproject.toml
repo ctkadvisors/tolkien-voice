@@ -10,6 +10,7 @@ dependencies = [
   "pydantic>=2.11,<3",
   "pydantic-settings>=2.10,<3",
   "pyyaml>=6.0,<7",
+  "ruamel-yaml>=0.18,<1",
   "uvicorn[standard]>=0.35,<1",
   "websockets>=15,<16",
 ]
@@ -36,4 +37,3 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-

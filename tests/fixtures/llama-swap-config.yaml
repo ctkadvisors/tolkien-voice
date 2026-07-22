@@ -1,0 +1,100 @@
+# llama-swap — OpenAI-compatible front door on :9090, on-the-fly vLLM model swap.
+#   coder       -> Qwen3-Coder-Next GB10 NVFP4/Marlin (DEFAULT; qwen-mcp)
+#   coder-fp8   -> Qwen3-Coder-Next FP8 (fallback / comparison)
+#   qwen36      -> Qwen3.6-35B-A3B NVFP4 (fast agentic secondary)
+#   gemma       -> Gemma 4 12B (multimodal)
+#   embed       -> Qwen3-Embedding-0.6B (always resident)
+logLevel: info
+healthCheckTimeout: 900
+
+models:
+  coder:
+    proxy: http://127.0.0.1:8000
+    checkEndpoint: /health
+    healthCheckTimeout: 900          # NVFP4 80B: ~5min weight load + compile
+    cmd: |
+      bash -lc 'exec ~/inference/companions/run-supervised.sh vllm_coder_gb10_marlin ~/inference/companions/launch-coder-gb10-marlin.sh'
+    cmdStop: docker stop vllm_coder_gb10_marlin
+    useModelName: Qwen3-Coder-Next-GB10
+    aliases:
+      - Qwen3-Coder-Next-GB10
+      - coder-gb10
+      - Qwen3-Coder-Next-NVFP4
+      - coder-nvfp4
+
+  coder-fp8:
+    proxy: http://127.0.0.1:8000
+    checkEndpoint: /health
+    healthCheckTimeout: 900
+    cmd: |
+      bash -lc 'exec ~/inference/companions/run-supervised.sh vllm_node ~/inference/companions/relaunch-base.sh'
+    cmdStop: docker stop vllm_node
+    useModelName: Qwen/Qwen3-Coder-Next-FP8
+    aliases:
+      - Qwen/Qwen3-Coder-Next-FP8
+
+  qwen36:
+    proxy: http://127.0.0.1:8005
+    checkEndpoint: /health
+    healthCheckTimeout: 600
+    cmd: |
+      bash -lc 'exec ~/inference/companions/run-supervised.sh vllm_qwen36 ~/inference/companions/launch-qwen36.sh'
+    cmdStop: docker stop vllm_qwen36
+    useModelName: Qwen3.6-35B-A3B-NVFP4
+    aliases:
+      - Qwen3.6-35B-A3B-NVFP4
+
+  gemma:
+    proxy: http://127.0.0.1:8203
+    checkEndpoint: /health
+    healthCheckTimeout: 300
+    cmd: |
+      bash -lc 'exec ~/inference/companions/run-supervised.sh vllm_gemma ~/inference/companions/launch-gemma.sh'
+    cmdStop: docker stop vllm_gemma
+    useModelName: google/gemma-4-12B-it-qat-w4a16-ct
+    aliases:
+      - google/gemma-4-12B-it-qat-w4a16-ct
+
+  embed:
+    proxy: http://127.0.0.1:8201
+    checkEndpoint: /health
+    healthCheckTimeout: 300
+    cmd: |
+      bash -lc 'exec ~/inference/companions/run-supervised.sh vllm_embed ~/inference/companions/launch-embedding.sh'
+    cmdStop: docker stop vllm_embed
+    useModelName: Qwen/Qwen3-Embedding-0.6B
+    aliases:
+      - Qwen/Qwen3-Embedding-0.6B
+
+  tolkien:
+    proxy: http://127.0.0.1:8206
+    checkEndpoint: /health
+    healthCheckTimeout: 600          # 28.6G q8 GGUF weight load from NVMe
+    cmd: |
+      bash -lc 'exec ~/inference/companions/launch-tolkien.sh'
+    useModelName: tolkien
+    aliases:
+      - tolkien-27b
+
+
+groups:
+  always:
+    swap: false
+    exclusive: false
+    persistent: true
+    members:
+      - embed
+  big:
+    swap: true
+    exclusive: false
+    members:
+      - coder
+      - coder-fp8
+      - qwen36
+      - gemma
+      - tolkien
+
+hooks:
+  on_startup:
+    preload:
+      - embed
