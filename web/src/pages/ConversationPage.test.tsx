@@ -108,6 +108,40 @@ describe("ConversationPage", () => {
     expect(await screen.findByRole("button", { name: "End native conversation" })).toBeVisible();
   });
 
+  it("resumes audio before awaiting microphone permission", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("AudioContext", class {
+      sampleRate = 48000;
+      destination = {};
+      audioWorklet = { addModule: vi.fn().mockResolvedValue(undefined) };
+      constructor() {
+        calls.push("context");
+      }
+      resume = vi.fn(() => {
+        calls.push("resume");
+        return Promise.resolve();
+      });
+      close = vi.fn().mockResolvedValue(undefined);
+    });
+    const getUserMedia = vi.fn(() => {
+      calls.push("permission");
+      return Promise.resolve({ getTracks: () => [] });
+    });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    const user = userEvent.setup();
+    render(
+      <ConversationPage session={{ ...baseSession, state: "ready" }} onEnd={vi.fn()} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Enter conversation" }));
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+
+    expect(calls.slice(0, 3)).toEqual(["context", "resume", "permission"]);
+  });
+
   it("ends cleanly and exposes no recording controls", async () => {
     const stop = vi.fn();
     const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [{ stop }] });

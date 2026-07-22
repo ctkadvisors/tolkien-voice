@@ -23,12 +23,15 @@ export function ConversationPage({ session, onEnd }: Props) {
 
   const prepareAudio = useCallback(async () => {
     setAudioState("requesting");
+    let context: AudioContext | null = null;
+    let permissionStream: MediaStream | null = null;
     try {
-      const permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      permissionStream.getTracks().forEach((track) => track.stop());
-      const context = new AudioContext();
+      context = new AudioContext();
       audioContext.current = context;
-      await context.resume();
+      const resumePromise = context.resume();
+      const permissionPromise = navigator.mediaDevices.getUserMedia({ audio: true });
+      [, permissionStream] = await Promise.all([resumePromise, permissionPromise]);
+      permissionStream.getTracks().forEach((track) => track.stop());
       prewarmDecoderWorker(context.sampleRate);
       try {
         worklet.current = new AudioWorkletNode(context, "moshi-processor");
@@ -39,6 +42,13 @@ export function ConversationPage({ session, onEnd }: Props) {
       worklet.current.connect(context.destination);
       setAudioState("ready");
     } catch (error) {
+      permissionStream?.getTracks().forEach((track) => track.stop());
+      if (context !== null) {
+        await context.close().catch(() => undefined);
+      }
+      if (audioContext.current === context) {
+        audioContext.current = null;
+      }
       const denied = error instanceof DOMException && error.name === "NotAllowedError";
       setAudioState(denied ? "denied" : "error");
     }

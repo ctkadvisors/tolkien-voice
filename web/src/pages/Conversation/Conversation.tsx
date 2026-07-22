@@ -30,6 +30,7 @@ export function Conversation({
   const actualAudioPlayed = useRef(0);
   const [showTranscript, setShowTranscript] = useState(false);
   const [connectionEnded, setConnectionEnded] = useState(false);
+  const handleDisconnect = useCallback(() => setConnectionEnded(true), []);
   const socketUrl = useMemo(() => {
     const url = new URL(window.location.origin);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -39,7 +40,7 @@ export function Conversation({
   }, [sessionId]);
   const { socketStatus, socket, sendMessage, start, stop } = useSocket({
     uri: socketUrl,
-    onDisconnect: () => setConnectionEnded(true),
+    onDisconnect: handleDisconnect,
   });
 
   useEffect(() => {
