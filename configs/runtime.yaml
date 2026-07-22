@@ -1,0 +1,14 @@
+controller_host: 127.0.0.1
+controller_port: 8788
+personaplex_url: http://127.0.0.1:8998
+personaplex_container: tolkien-voice-personaplex
+personaplex_image: tolkien-voice/personaplex:3428dfd
+hf_repo: nvidia/personaplex-7b-v1
+disconnect_idle_seconds: 300
+lease_wait_seconds: 900
+runtime_start_timeout_seconds: 900
+llama_swap_url: http://127.0.0.1:9090
+lock_path: /run/user/1000/tolkien-voice/big-model.lock
+owner_path: /run/user/1000/tolkien-voice/big-model-owner.json
+data_root: /home/chrisknuteson/tolkien-voice-data
+
