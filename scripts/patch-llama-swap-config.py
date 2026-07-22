@@ -343,8 +343,12 @@ def check(config_path: Path, base_url: str) -> str:
     return patch_config_text(config_path.read_text())
 
 
-def apply(config_path: Path, base_url: str) -> Path:
+def apply(config_path: Path, base_url: str) -> Path | None:
+    current = config_path.read_text()
     rendered = check(config_path, base_url)
+    if rendered == current:
+        _verify_routes(base_url)
+        return None
     backup = make_backup_path(config_path)
     if backup.exists():
         raise RuntimeError(f"refusing to overwrite backup: {backup}")
@@ -390,7 +394,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"llama-swap config is safe: {state}")
         elif args.apply:
             backup = apply(args.config, args.llama_swap_url)
-            print(f"patched llama-swap config; backup: {backup}")
+            if backup is None:
+                print("llama-swap config already patched; no reload needed")
+            else:
+                print(f"patched llama-swap config; backup: {backup}")
         else:
             restore(args.config, args.restore, args.llama_swap_url)
             print(f"restored llama-swap config from: {args.restore}")

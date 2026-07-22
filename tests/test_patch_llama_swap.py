@@ -133,3 +133,21 @@ def test_health_probe_accepts_plain_text_ok(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(patcher, "urlopen", lambda *_args, **_kwargs: PlainTextResponse())
     assert patcher._health_ok("http://127.0.0.1:19090/health") is True
+
+
+def test_apply_is_a_noop_when_config_is_already_patched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    patcher = load_patcher()
+    live = tmp_path / "config.yaml"
+    live.write_text(patcher.patch_config_text(source_text()))
+    monkeypatch.setattr(patcher, "_running_models", lambda _url: ["embed"])
+    monkeypatch.setattr(patcher, "_verify_routes", lambda _url: None)
+    monkeypatch.setattr(
+        patcher,
+        "_write_atomic",
+        lambda *_args, **_kwargs: pytest.fail("already-patched config must not be rewritten"),
+    )
+
+    assert patcher.apply(live, "http://127.0.0.1:9090") is None
+    assert list(tmp_path.glob("*.bak.tolkien-voice-*")) == []

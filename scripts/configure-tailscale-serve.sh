@@ -80,7 +80,7 @@ if ! state_is_empty; then
   exit 1
 fi
 if [[ ! -e "$baseline" ]]; then
-  tailscale serve get-config "$baseline" --all
+  tailscale serve get-config --all "$baseline"
   chmod 0600 "$baseline"
 fi
 
