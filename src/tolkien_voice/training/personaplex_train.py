@@ -13,6 +13,15 @@ def mimi_codebooks_for_config(config: dict[str, Any]) -> int:
     return max(dep_q, n_q - dep_q)
 
 
+def load_personaplex_mimi(loaders, checkpoint_info, device: str):
+    raw_config = checkpoint_info.raw_config or {}
+    return loaders.get_mimi(
+        checkpoint_info.mimi_weights,
+        num_codebooks=mimi_codebooks_for_config(raw_config),
+        device=device,
+    )
+
+
 def install_personaplex_mimi_patch() -> None:
     from moshi.models import loaders
 
@@ -22,12 +31,7 @@ def install_personaplex_mimi_patch() -> None:
         raw_config = checkpoint_info.raw_config or {}
         if raw_config.get("version") != "personaplex-7b-v1":
             return original_get_mimi(checkpoint_info, device=device)
-        return loaders.get_mimi(
-            checkpoint_info.mimi_weights,
-            checkpoint_info.mimi_config,
-            num_codebooks=mimi_codebooks_for_config(raw_config),
-            device=device,
-        )
+        return load_personaplex_mimi(loaders, checkpoint_info, device)
 
     loaders.CheckpointInfo.get_mimi = get_mimi
 
