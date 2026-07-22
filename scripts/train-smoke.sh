@@ -32,6 +32,7 @@ scripts/run-with-big-model-lease.sh tolkien-sts-train \
     --volume "$repository:/workspace:ro" \
     --volume "$data_root:/data" \
     --volume "$snapshot:/models:ro" \
+    --volume "$model_cache/blobs:/blobs:ro" \
     --workdir /workspace \
     --env PYTHONPATH=/workspace/src:/opt/moshi-finetune \
     --env CUDA_VISIBLE_DEVICES=0 \

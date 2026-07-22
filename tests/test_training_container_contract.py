@@ -44,6 +44,12 @@ def test_training_script_uses_shared_lease_and_non_root_container_user() -> None
     assert "docker rm" not in script
 
 
+def test_training_script_mounts_hugging_face_blobs_for_snapshot_symlinks() -> None:
+    script = (REPOSITORY / "scripts/train-smoke.sh").read_text()
+
+    assert '--volume "$model_cache/blobs:/blobs:ro"' in script
+
+
 def test_training_image_builder_accepts_only_git_or_pinned_revision_marker() -> None:
     script = (REPOSITORY / "scripts/build-training-image.sh").read_text()
     marker = (REPOSITORY / "vendor/moshi-finetune-revision.txt").read_text().strip()
