@@ -1,0 +1,40 @@
+FROM nvcr.io/nvidia/pytorch:25.11-py3
+
+ARG MOSHI_REVISION=061cc4c630d9e11722e08b7d02b1836ba58f30e8
+ARG MOSHI_FINETUNE_REVISION=2acc879fe7c48f885a18f6cc9548bccb2674d87b
+
+LABEL org.opencontainers.image.title="Tolkien Voice PersonaPlex trainer" \
+      org.opencontainers.image.source="https://github.com/ctkadvisors/tolkien-voice" \
+      org.opencontainers.image.moshi.revision="${MOSHI_REVISION}" \
+      org.opencontainers.image.moshi-finetune.revision="${MOSHI_FINETUNE_REVISION}"
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/workspace/src:/opt/moshi-finetune
+
+RUN git clone https://github.com/kyutai-labs/moshi.git /opt/moshi \
+    && git -C /opt/moshi checkout "${MOSHI_REVISION}" \
+    && test "$(git -C /opt/moshi rev-parse HEAD)" = "${MOSHI_REVISION}"
+
+COPY vendor/moshi-finetune /opt/moshi-finetune
+RUN test "$(git -C /opt/moshi-finetune rev-parse HEAD 2>/dev/null || true)" = "${MOSHI_FINETUNE_REVISION}" \
+      || test -f /opt/moshi-finetune/train.py
+
+RUN python -m pip install --no-cache-dir \
+      "numpy>=1.26,<2.3" \
+      "safetensors>=0.4,<0.6" \
+      "huggingface-hub>=0.24,<0.29" \
+      "einops>=0.7,<0.9" \
+      "sentencepiece==0.2" \
+      "sphn==0.1.12" \
+      "fire>=0.7,<1" \
+      "simple-parsing>=0.1.7,<1" \
+      "pyyaml>=6,<7" \
+      "tensorboard>=2.18,<3" \
+      "tqdm>=4.66,<5" \
+    && python -m pip install --no-cache-dir --no-deps -e /opt/moshi/moshi \
+    && python -m pip install --no-cache-dir --no-deps -e /opt/moshi-finetune \
+    && PYTHONPATH=/opt/moshi-finetune python -c "import moshi; import train; import finetune"
+
+WORKDIR /workspace
+ENTRYPOINT []
