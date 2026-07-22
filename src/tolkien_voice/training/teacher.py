@@ -23,9 +23,28 @@ class TeacherResponseError(ValueError):
 
 CHARACTER_ALIASES = {
     "aragorn": frozenset(
-        {"aragorn", "aragorn son of arathorn", "aragorn strider", "strider", "king elessar"}
+        {
+            "aragorn",
+            "aragorn son of arathorn",
+            "aragorn son of arathorn strider",
+            "aragorn strider",
+            "aragorn king elessar",
+            "strider",
+            "elessar",
+            "king elessar",
+        }
     ),
-    "sauron": frozenset({"sauron", "sauron the dark lord", "dark lord sauron"}),
+    "sauron": frozenset(
+        {
+            "sauron",
+            "sauron the dark lord",
+            "the dark lord sauron",
+            "dark lord sauron",
+            "sauron lord of mordor",
+            "sauron annatar",
+            "annatar",
+        }
+    ),
 }
 
 
