@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { createPlayoutPolicy } from "./pages/Conversation/hooks/playoutPolicy";
+
 function asMs(samples) {
   return (samples * 1000 / sampleRate).toFixed(1);
 }
@@ -13,21 +15,17 @@ class MoshiProcessor extends AudioWorkletProcessor {
     console.log("Moshi processor lives", currentFrame, sampleRate);
     console.log(currentTime);
 
-    // Buffer length definitions
-    let frameSize = asSamples(80);
-    // initialBufferSamples: we wait to have at least that many samples before starting to play
-    this.initialBufferSamples = 1 * frameSize;
-    // once we have enough samples, we further wait that long before starting to play.
-    // This allows to have buffer lengths that are not a multiple of frameSize.
-    this.partialBufferSamples = asSamples(10);
-    // If the buffer length goes over that many, we will drop the oldest packets until
-    // we reach back initialBufferSamples + partialBufferSamples.
-    this.maxBufferSamples = asSamples(10);
-    // increments
-    this.partialBufferIncrement = asSamples(5);
-    this.maxPartialWithIncrements = asSamples(80);
-    this.maxBufferSamplesIncrement = asSamples(5);
-    this.maxMaxBufferWithIncrements = asSamples(80);
+    // Keep a bounded 120-340ms adaptive playout window. The previous 80-100ms window
+    // could not absorb a single delayed 40ms decoder frame and repeatedly
+    // faded to silence, which presented as static/choppy speech.
+    this.playoutPolicy = createPlayoutPolicy(sampleRate);
+    this.initialBufferSamples = this.playoutPolicy.initialBufferSamples;
+    this.partialBufferSamples = this.playoutPolicy.partialBufferSamples;
+    this.maxBufferSamples = this.playoutPolicy.maxBufferSamples;
+    this.partialBufferIncrement = this.playoutPolicy.partialBufferIncrement;
+    this.maxPartialWithIncrements = this.playoutPolicy.maxPartialWithIncrements;
+    this.maxBufferSamplesIncrement = this.playoutPolicy.maxBufferSamplesIncrement;
+    this.maxMaxBufferWithIncrements = this.playoutPolicy.maxMaxBufferWithIncrements;
 
     // State and metrics
     this.initState();
@@ -94,8 +92,8 @@ class MoshiProcessor extends AudioWorkletProcessor {
     this.pidx = 0;
 
     // For now let's reset the buffer params.
-    this.partialBufferSamples = asSamples(10);
-    this.maxBufferSamples = asSamples(10);
+    this.partialBufferSamples = this.playoutPolicy.partialBufferSamples;
+    this.maxBufferSamples = this.playoutPolicy.maxBufferSamples;
   }
 
   totalMaxBufferSamples() {

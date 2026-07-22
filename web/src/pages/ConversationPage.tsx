@@ -19,30 +19,66 @@ type AudioState = "idle" | "requesting" | "ready" | "denied" | "error";
 export function ConversationPage({ session, onEnd }: Props) {
   const audioContext = useRef<AudioContext | null>(null);
   const worklet = useRef<AudioWorkletNode | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
+  const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedInputDeviceId, setSelectedInputDeviceId] = useState("");
+  const [inputError, setInputError] = useState<string | null>(null);
   const [audioState, setAudioState] = useState<AudioState>("idle");
 
-  const prepareAudio = useCallback(async () => {
-    setAudioState("requesting");
-    let context: AudioContext | null = null;
-    let permissionStream: MediaStream | null = null;
+  const prepareAudio = useCallback(async (deviceId?: string) => {
+    const initialRequest = mediaStreamRef.current === null;
+    if (initialRequest) setAudioState("requesting");
+    setInputError(null);
+    let context = audioContext.current;
+    let nextStream: MediaStream | null = null;
     try {
-      context = new AudioContext();
-      audioContext.current = context;
-      const resumePromise = context.resume();
-      const permissionPromise = navigator.mediaDevices.getUserMedia({ audio: true });
-      [, permissionStream] = await Promise.all([resumePromise, permissionPromise]);
-      permissionStream.getTracks().forEach((track) => track.stop());
-      prewarmDecoderWorker(context.sampleRate);
-      try {
-        worklet.current = new AudioWorkletNode(context, "moshi-processor");
-      } catch {
-        await context.audioWorklet.addModule(moshiProcessorUrl);
-        worklet.current = new AudioWorkletNode(context, "moshi-processor");
+      if (context === null) {
+        context = new AudioContext();
+        audioContext.current = context;
       }
-      worklet.current.connect(context.destination);
+      const resumePromise = context.resume();
+      const permissionPromise = navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+        },
+        video: false,
+      });
+      [, nextStream] = await Promise.all([resumePromise, permissionPromise]);
+      if (worklet.current === null) {
+        prewarmDecoderWorker(context.sampleRate);
+        try {
+          worklet.current = new AudioWorkletNode(context, "moshi-processor");
+        } catch {
+          await context.audioWorklet.addModule(moshiProcessorUrl);
+          worklet.current = new AudioWorkletNode(context, "moshi-processor");
+        }
+        worklet.current.connect(context.destination);
+      }
+      let devices: MediaDeviceInfo[] = [];
+      try {
+        devices = await navigator.mediaDevices.enumerateDevices?.() ?? [];
+      } catch {
+        setInputError("Microphone is live; the browser did not expose its device list");
+      }
+      const previous = mediaStreamRef.current;
+      mediaStreamRef.current = nextStream;
+      setMediaStream(nextStream);
+      previous?.getTracks().forEach((track) => track.stop());
+      const track = nextStream.getTracks()[0];
+      setSelectedInputDeviceId(track?.getSettings?.().deviceId || deviceId || "");
+      setInputDevices(devices.filter((device) => device.kind === "audioinput"));
       setAudioState("ready");
     } catch (error) {
-      permissionStream?.getTracks().forEach((track) => track.stop());
+      nextStream?.getTracks().forEach((track) => track.stop());
+      if (!initialRequest) {
+        setInputError(error instanceof Error ? error.message : "Microphone switch failed");
+        return;
+      }
       if (context !== null) {
         await context.close().catch(() => undefined);
       }
@@ -57,9 +93,17 @@ export function ConversationPage({ session, onEnd }: Props) {
   const mayConnect = session.state === "ready" || session.state === "disconnected";
 
   useEffect(() => () => {
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     worklet.current?.disconnect();
     void audioContext.current?.close();
   }, []);
+
+  const endConversation = useCallback(async () => {
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+    setMediaStream(null);
+    await onEnd();
+  }, [onEnd]);
 
   if (session.state === "waiting_for_lease") {
     const owner = session.blocking_owner?.name;
@@ -110,7 +154,7 @@ export function ConversationPage({ session, onEnd }: Props) {
     );
   }
 
-  if (audioState !== "ready" || !audioContext.current || !worklet.current) {
+  if (audioState !== "ready" || !audioContext.current || !worklet.current || !mediaStream) {
     return (
       <WaitingRoom
         title="Opening the listening room"
@@ -126,7 +170,12 @@ export function ConversationPage({ session, onEnd }: Props) {
       characterName={session.character_name ?? session.character_id ?? "Character"}
       audioContext={audioContext as MutableRefObject<AudioContext>}
       worklet={worklet as MutableRefObject<AudioWorkletNode>}
-      onConversationEnd={onEnd}
+      mediaStream={mediaStream}
+      inputDevices={inputDevices}
+      selectedInputDeviceId={selectedInputDeviceId}
+      onInputDeviceChange={(deviceId) => void prepareAudio(deviceId)}
+      inputError={inputError}
+      onConversationEnd={endConversation}
     />
   );
 }

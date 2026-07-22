@@ -14,6 +14,11 @@ type Props = {
   characterName: string;
   audioContext: MutableRefObject<AudioContext>;
   worklet: MutableRefObject<AudioWorkletNode>;
+  mediaStream: MediaStream;
+  inputDevices: MediaDeviceInfo[];
+  selectedInputDeviceId: string;
+  onInputDeviceChange: (deviceId: string) => void;
+  inputError: string | null;
   onConversationEnd: () => void | Promise<void>;
 };
 
@@ -23,6 +28,11 @@ export function Conversation({
   characterName,
   audioContext,
   worklet,
+  mediaStream,
+  inputDevices,
+  selectedInputDeviceId,
+  onInputDeviceChange,
+  inputError,
   onConversationEnd,
 }: Props) {
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -82,10 +92,27 @@ export function Conversation({
               <span>{characterName}</span>
               <ServerAudio setGetAudioStats={() => undefined} theme="dark" />
             </div>
-            <div className="between-mark" aria-hidden="true">↔</div>
+            <div className="barge-control">
+              <span className="between-mark" aria-hidden="true">↔</span>
+              <button
+                type="button"
+                aria-label={`Interrupt ${characterName}`}
+                onClick={() => worklet.current.port.postMessage({ type: "reset" })}
+              >
+                Cut in
+              </button>
+              <small>clears queued speech</small>
+            </div>
             <div className="voice-orbit listener-orbit">
               <span>You</span>
-              <UserAudio theme="dark" />
+              <UserAudio
+                theme="dark"
+                mediaStream={mediaStream}
+                inputDevices={inputDevices}
+                selectedInputDeviceId={selectedInputDeviceId}
+                onInputDeviceChange={onInputDeviceChange}
+                inputError={inputError}
+              />
             </div>
           </section>
 

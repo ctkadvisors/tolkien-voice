@@ -16,7 +16,7 @@ export enum UserMediaStatuses {
 
 
 type Args = {
-  constraints: MediaStreamConstraints;
+  mediaStream: MediaStream;
   onDataChunk?: (chunk: Uint8Array) => void;
   onRecordingStart?: () => void;
   onRecordingStop?: () => void;
@@ -27,13 +27,13 @@ type OpusRecorder = {
   ondataavailable: (data: Uint8Array) => void;
   onstart: () => void;
   onstop: () => void;
-  start: () => void;
-  stop: () => void;
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
 };
 
 
 export function useUserAudio({
-  constraints,
+  mediaStream,
   onDataChunk,
   onRecordingStart = () => undefined,
   onRecordingStop = () => undefined,
@@ -42,17 +42,20 @@ export function useUserAudio({
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState(UserMediaStatuses.IDLE);
   const recorder = useRef<OpusRecorder | null>(null);
-  const mediaStream = useRef<MediaStream | null>(null);
+  const activeSource = useRef<MediaStreamAudioSourceNode | null>(null);
 
   const startRecordingUser = useCallback(async () => {
     setStatus(UserMediaStatuses.WAITING_FOR_PERMISSION);
+    setError(null);
+    let source: MediaStreamAudioSourceNode | null = null;
     try {
-      mediaStream.current = await navigator.mediaDevices.getUserMedia(constraints);
       const analyser = audioContext.current.createAnalyser();
-      const source = audioContext.current.createMediaStreamSource(mediaStream.current);
-      source.connect(analyser);
+      const createdSource = audioContext.current.createMediaStreamSource(mediaStream);
+      source = createdSource;
+      activeSource.current = createdSource;
+      createdSource.connect(analyser);
       const nextRecorder = new Recorder({
-        mediaTrackConstraints: constraints,
+        sourceNode: createdSource,
         encoderPath,
         bufferLength: Math.round((960 * audioContext.current.sampleRate) / 24000),
         encoderFrameSize: 20,
@@ -75,29 +78,35 @@ export function useUserAudio({
         onRecordingStart();
       };
       nextRecorder.onstop = () => {
-        source.disconnect();
-        mediaStream.current?.getTracks().forEach((track) => track.stop());
-        mediaStream.current = null;
+        createdSource.disconnect();
+        if (recorder.current !== nextRecorder) return;
+        activeSource.current = null;
         recorder.current = null;
         setStatus(UserMediaStatuses.STOPPED);
         onRecordingStop();
       };
-      nextRecorder.start();
-      return { analyser, mediaStream: mediaStream.current, source };
+      await nextRecorder.start();
+      return { analyser, mediaStream, source: createdSource };
     } catch (cause) {
-      setError(cause instanceof Error ? cause.name : "MicrophoneError");
+      source?.disconnect();
+      activeSource.current = null;
+      recorder.current = null;
+      setError(cause instanceof Error ? cause.message || cause.name : "MicrophoneError");
       setStatus(UserMediaStatuses.ERROR);
       return null;
     }
-  }, [audioContext, constraints, micDuration, onDataChunk, onRecordingStart, onRecordingStop]);
+  }, [audioContext, mediaStream, micDuration, onDataChunk, onRecordingStart, onRecordingStop]);
 
   const stopRecording = useCallback(() => {
     setStatus(UserMediaStatuses.STOPPING);
     if (recorder.current) {
-      recorder.current.stop();
+      void recorder.current.stop().catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : "RecorderStopError");
+        setStatus(UserMediaStatuses.ERROR);
+      });
     } else {
-      mediaStream.current?.getTracks().forEach((track) => track.stop());
-      mediaStream.current = null;
+      activeSource.current?.disconnect();
+      activeSource.current = null;
       setStatus(UserMediaStatuses.STOPPED);
     }
   }, []);

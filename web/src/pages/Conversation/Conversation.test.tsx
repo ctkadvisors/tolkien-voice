@@ -1,4 +1,5 @@
-import { render, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
 import { Conversation } from "./Conversation";
@@ -43,7 +44,12 @@ it("keeps one WebSocket while connection state rerenders", async () => {
       sessionId="d2399de0-ae35-4064-8e94-deaa64a5b300"
       characterName="Aragorn"
       audioContext={{ current: {} as AudioContext }}
-      worklet={{ current: {} as AudioWorkletNode }}
+      worklet={{ current: { port: { postMessage: vi.fn() } } as unknown as AudioWorkletNode }}
+      mediaStream={{} as MediaStream}
+      inputDevices={[]}
+      selectedInputDeviceId=""
+      onInputDeviceChange={vi.fn()}
+      inputError={null}
       onConversationEnd={vi.fn()}
     />,
   );
@@ -55,4 +61,28 @@ it("keeps one WebSocket while connection state rerenders", async () => {
   expect(FakeWebSocket.instances[0]?.url).toContain(
     "/api/session/d2399de0-ae35-4064-8e94-deaa64a5b300/chat",
   );
+});
+
+
+it("lets the listener immediately discard queued speech while the mic keeps streaming", async () => {
+  const postMessage = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <Conversation
+      sessionId="d2399de0-ae35-4064-8e94-deaa64a5b300"
+      characterName="Aragorn"
+      audioContext={{ current: {} as AudioContext }}
+      worklet={{ current: { port: { postMessage } } as unknown as AudioWorkletNode }}
+      mediaStream={{} as MediaStream}
+      inputDevices={[]}
+      selectedInputDeviceId=""
+      onInputDeviceChange={vi.fn()}
+      inputError={null}
+      onConversationEnd={vi.fn()}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Interrupt Aragorn" }));
+
+  expect(postMessage).toHaveBeenCalledWith({ type: "reset" });
 });
