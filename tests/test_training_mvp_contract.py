@@ -6,6 +6,8 @@ import yaml
 ROOT = Path(__file__).parents[1]
 CONFIG = ROOT / "configs" / "training" / "mvp-v1.yaml"
 SCRIPT = ROOT / "scripts" / "train-mvp.sh"
+V2_CONFIG = ROOT / "configs" / "training" / "mvp-v2.yaml"
+V2_SCRIPT = ROOT / "scripts" / "train-mvp-v2.sh"
 
 
 def test_mvp_training_config_is_not_a_smoke_run() -> None:
@@ -37,4 +39,43 @@ def test_mvp_training_script_fails_closed_and_records_exact_adapter() -> None:
     assert "configs/training/mvp-v1.yaml" in source
     assert "checkpoint_000192/consolidated/lora.safetensors" in source
     assert "run_metadata" in source
+    assert "active-adapter" not in source
+
+
+def test_mvp_v2_training_config_uses_longer_context_and_lower_lr() -> None:
+    payload = yaml.safe_load(V2_CONFIG.read_text())
+
+    assert payload["data"]["train_data"] == "/data/datasets/mvp-v1/manifests/train.jsonl"
+    assert payload["data"]["eval_data"] == "/data/datasets/mvp-v1/manifests/validation.jsonl"
+    assert payload["duration_sec"] == 32
+    assert payload["max_steps"] == 256
+    assert payload["lora"]["rank"] == 32
+    assert payload["lora"]["ft_embed"] is False
+    assert payload["optim"]["lr"] == 5.0e-7
+    assert payload["text_padding_weight"] == 0.1
+    assert payload["first_codebook_weight_multiplier"] == 100.0
+    assert payload["batch_size"] == 1
+    assert payload["gradient_checkpointing"] is True
+    assert payload["param_dtype"] == "bfloat16"
+    assert payload["do_eval"] is True
+    assert payload["eval_freq"] == 64
+    assert payload["ckpt_freq"] == 64
+    assert payload["num_ckpt_keep"] >= 4
+    assert payload["overwrite_run_dir"] is False
+    assert payload["run_dir"] == "/data/runs/mvp-v2-r32-256step-32sec"
+
+
+def test_mvp_v2_script_audits_and_selects_best_heldout_checkpoint() -> None:
+    source = V2_SCRIPT.read_text()
+
+    assert "set -Eeuo pipefail" in source
+    assert 'readonly dataset_root="$data_root/datasets/mvp-v1"' in source
+    assert 'readonly run_name=mvp-v2-r32-256step-32sec' in source
+    assert "tolkien_voice.training.audit" in source
+    assert "scripts/run-with-big-model-lease.sh" in source
+    assert "--network none" in source
+    assert "configs/training/mvp-v2.yaml" in source
+    assert "checkpoint_000256/consolidated/lora.safetensors" in source
+    assert "tolkien_voice.training.select_checkpoint" in source
+    assert "selected-checkpoint-metadata.json" in source
     assert "active-adapter" not in source
