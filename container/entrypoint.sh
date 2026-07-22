@@ -13,7 +13,8 @@ if (( (8#$token_mode & 077) != 0 )); then
   exit 78
 fi
 
-IFS= read -r HF_TOKEN <"$token_file"
+HF_TOKEN=
+IFS= read -r HF_TOKEN <"$token_file" || [[ -n "$HF_TOKEN" ]]
 if [[ -z "$HF_TOKEN" ]]; then
   echo "Hugging Face token secret is empty" >&2
   exit 78
@@ -25,4 +26,3 @@ exec python -m moshi.server \
   --port 8998 \
   --static none \
   --hf-repo nvidia/personaplex-7b-v1
-

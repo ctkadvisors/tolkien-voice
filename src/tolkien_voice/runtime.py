@@ -63,7 +63,7 @@ class PersonaPlexRuntime:
     async def recover(self) -> None:
         result = await self._inspect()
         if result.exit_code == 0:
-            await self._stop_command()
+            await self._remove_command()
         self._started = False
 
     async def start(self) -> None:
@@ -99,6 +99,12 @@ class PersonaPlexRuntime:
                     return
             except (httpx.HTTPError, OSError) as error:
                 last_error = error
+            container = await self._inspect()
+            state = container.stdout.strip().lower()
+            if container.exit_code != 0 or state in {"dead", "exited", "removing"}:
+                raise RuntimeError(
+                    f"PersonaPlex container exited before readiness (state={state or 'absent'})"
+                )
             remaining = deadline - loop.time()
             if remaining <= 0:
                 detail = f": {last_error}" if last_error else ""
@@ -121,7 +127,7 @@ class PersonaPlexRuntime:
     async def stop(self) -> None:
         if not self._started:
             return
-        await self._stop_command()
+        await self._remove_command()
         self._started = False
 
     def _prepare_directories(self) -> None:
@@ -158,7 +164,6 @@ class PersonaPlexRuntime:
             "docker",
             "run",
             "--detach",
-            "--rm",
             "--name",
             self.settings.personaplex_container,
             "--gpus",
@@ -190,13 +195,12 @@ class PersonaPlexRuntime:
             timeout=10,
         )
 
-    async def _stop_command(self) -> None:
+    async def _remove_command(self) -> None:
         await self.runner.run(
             [
                 "docker",
-                "stop",
-                "--time",
-                "20",
+                "rm",
+                "--force",
                 self.settings.personaplex_container,
             ],
             timeout=30,

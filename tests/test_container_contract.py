@@ -39,6 +39,12 @@ def test_entrypoint_uses_only_the_runtime_secret_and_loopback() -> None:
     assert "cat /run/secrets/hf_token" not in source
 
 
+def test_entrypoint_accepts_a_token_file_without_trailing_newline() -> None:
+    source = ENTRYPOINT.read_text(encoding="utf-8")
+
+    assert 'read -r HF_TOKEN <"$token_file" || [[ -n "$HF_TOKEN" ]]' in source
+
+
 def test_healthcheck_does_not_allocate_a_chat() -> None:
     source = HEALTHCHECK.read_text(encoding="utf-8")
 
