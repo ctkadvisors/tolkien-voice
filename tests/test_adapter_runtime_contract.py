@@ -171,8 +171,17 @@ def test_server_and_entrypoint_expose_adapter_identity() -> None:
     assert 'app.router.add_get("/api/health"' in runtime_wrapper
     assert '"adapter_sha256"' in runtime_wrapper
     assert '"base_revision"' in runtime_wrapper
+    assert '"merged_projection_pairs"' in runtime_wrapper
     assert "merge_lora_state_dict" in runtime_wrapper
     assert "strict=True" in runtime_wrapper
     assert "TOLKIEN_VOICE_LORA_WEIGHT" in entrypoint
     assert "TOLKIEN_VOICE_LORA_SHA256" in entrypoint
     assert "TOLKIEN_VOICE_BASE_REVISION" in entrypoint
+
+
+def test_native_probe_requires_handshake_and_audio_response() -> None:
+    probe = (ROOT / "scripts/probe-native-session.py").read_text()
+
+    assert 'handshake.data != b"\\x00"' in probe
+    assert 'await websocket.send_bytes(b"\\x01" + payload)' in probe
+    assert 'return 0 if result["audio_messages"] else 1' in probe

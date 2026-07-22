@@ -43,7 +43,7 @@ def _verify_adapter() -> tuple[Path, str]:
     return path, actual
 
 
-def _patch_model_loader(adapter_path: Path) -> None:
+def _patch_model_loader(adapter_path: Path, identity: dict[str, object]) -> None:
     from moshi.models import loaders
 
     original = loaders.get_moshi_lm
@@ -68,6 +68,7 @@ def _patch_model_loader(adapter_path: Path) -> None:
         incompatible = model.load_state_dict(model_state, strict=True)
         if incompatible.missing_keys or incompatible.unexpected_keys:
             raise RuntimeError(f"partial LoRA load refused: {incompatible}")
+        identity["merged_projection_pairs"] = merged_count
         model.eval()
         logger.info("merged %d verified LoRA projection pairs", merged_count)
         return model
@@ -75,20 +76,14 @@ def _patch_model_loader(adapter_path: Path) -> None:
     loaders.get_moshi_lm = get_moshi_lm
 
 
-def _patch_health_endpoint(adapter_sha256: str) -> None:
+def _patch_health_endpoint(identity: dict[str, object]) -> None:
     original_application = web.Application
 
     def application(*args, **kwargs):
         app = original_application(*args, **kwargs)
 
         async def health(_):
-            return web.json_response(
-                {
-                    "status": "ok",
-                    "adapter_sha256": adapter_sha256,
-                    "base_revision": PINNED_BASE_REVISION,
-                }
-            )
+            return web.json_response(identity)
 
         app.router.add_get("/api/health", health)
         return app
@@ -98,8 +93,14 @@ def _patch_health_endpoint(adapter_sha256: str) -> None:
 
 def main() -> None:
     adapter_path, adapter_sha256 = _verify_adapter()
-    _patch_model_loader(adapter_path)
-    _patch_health_endpoint(adapter_sha256)
+    identity: dict[str, object] = {
+        "status": "ok",
+        "adapter_sha256": adapter_sha256,
+        "base_revision": PINNED_BASE_REVISION,
+        "merged_projection_pairs": None,
+    }
+    _patch_model_loader(adapter_path, identity)
+    _patch_health_endpoint(identity)
     logger.info(
         "starting PersonaPlex with adapter sha256=%s base_revision=%s",
         adapter_sha256,
