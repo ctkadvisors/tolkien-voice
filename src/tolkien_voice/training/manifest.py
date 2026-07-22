@@ -56,6 +56,8 @@ def validate_rendered_examples(examples: list[RenderedExample]) -> None:
 def write_moshi_manifests(
     output_directory: Path,
     examples: list[RenderedExample],
+    *,
+    manifest_audio_root: Path | None = None,
 ) -> dict[Split, Path]:
     validate_rendered_examples(examples)
     output_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -68,10 +70,15 @@ def write_moshi_manifests(
         temporary = destination.with_suffix(".jsonl.tmp")
         with temporary.open("w", encoding="utf-8") as output:
             for item in selected:
+                audio_path = (
+                    item.wav_path.resolve()
+                    if manifest_audio_root is None
+                    else manifest_audio_root / item.wav_path.name
+                )
                 output.write(
                     json.dumps(
                         {
-                            "path": str(item.wav_path.resolve()),
+                            "path": str(audio_path),
                             "duration": item.duration_sec,
                         }
                     )

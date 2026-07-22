@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from array import array
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 import os
@@ -20,6 +21,7 @@ from .schema import DialogueBlueprint, RenderedExample, TimingKind, Utterance
 SAMPLE_RATE = 24_000
 MAX_SAFE_SAMPLE = int(32_767 * 0.99)
 Synthesizer = Callable[[Utterance, Path], None]
+SynthesizerFactory = Callable[[DialogueBlueprint], Synthesizer]
 
 
 def render_blueprint(
@@ -198,6 +200,31 @@ class MacOSSaySynthesizer:
         )
 
 
+def render_corpus(
+    blueprints: list[DialogueBlueprint],
+    output_directory: Path,
+    *,
+    synthesizer_for: SynthesizerFactory,
+    workers: int = 1,
+) -> list[RenderedExample]:
+    if not blueprints:
+        raise ValueError("blueprint corpus is empty")
+    if not 1 <= workers <= 8:
+        raise ValueError("workers must be between 1 and 8")
+
+    def render(blueprint: DialogueBlueprint) -> RenderedExample:
+        return render_blueprint(
+            blueprint,
+            output_directory / "audio",
+            synthesize=synthesizer_for(blueprint),
+        )
+
+    if workers == 1:
+        return [render(blueprint) for blueprint in blueprints]
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="tolkien-render") as pool:
+        return list(pool.map(render, blueprints))
+
+
 def _load_blueprints(path: Path) -> list[DialogueBlueprint]:
     result: list[DialogueBlueprint] = []
     with path.open(encoding="utf-8") as source:
@@ -220,25 +247,30 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--user-voice", default="Samantha")
     parser.add_argument("--aragorn-voice", default="Daniel")
     parser.add_argument("--sauron-voice", default="Ralph")
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--manifest-audio-root", type=Path)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    rendered: list[RenderedExample] = []
-    for blueprint in _load_blueprints(args.blueprints):
+    blueprints = _load_blueprints(args.blueprints)
+
+    def synthesizer_for(blueprint: DialogueBlueprint) -> Synthesizer:
         voice = args.aragorn_voice if blueprint.character == "aragorn" else args.sauron_voice
-        rendered.append(
-            render_blueprint(
-                blueprint,
-                args.output_directory / "audio",
-                synthesize=MacOSSaySynthesizer(
-                    user_voice=args.user_voice,
-                    assistant_voice=voice,
-                ),
-            )
-        )
-    manifests = write_moshi_manifests(args.output_directory / "manifests", rendered)
+        return MacOSSaySynthesizer(user_voice=args.user_voice, assistant_voice=voice)
+
+    rendered = render_corpus(
+        blueprints,
+        args.output_directory,
+        synthesizer_for=synthesizer_for,
+        workers=args.workers,
+    )
+    manifests = write_moshi_manifests(
+        args.output_directory / "manifests",
+        rendered,
+        manifest_audio_root=args.manifest_audio_root,
+    )
     print(
         json.dumps(
             {

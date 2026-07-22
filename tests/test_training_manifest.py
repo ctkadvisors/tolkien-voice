@@ -50,6 +50,19 @@ def test_manifest_validation_and_moshi_jsonl(tmp_path: Path) -> None:
     assert row == {"path": str(item.wav_path.resolve()), "duration": 1.0}
 
 
+def test_manifest_can_target_the_training_container_mount(tmp_path: Path) -> None:
+    item = example(tmp_path)
+
+    paths = write_moshi_manifests(
+        tmp_path / "manifests",
+        [item],
+        manifest_audio_root=Path("/data/datasets/mvp-v1/audio"),
+    )
+
+    row = json.loads(paths[Split.TRAIN].read_text())
+    assert row["path"] == f"/data/datasets/mvp-v1/audio/{item.wav_path.name}"
+
+
 def test_manifest_rejects_duplicate_ids(tmp_path: Path) -> None:
     item = example(tmp_path)
 

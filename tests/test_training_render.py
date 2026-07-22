@@ -7,7 +7,7 @@ import wave
 
 import pytest
 
-from tolkien_voice.training.render import MacOSSaySynthesizer, render_blueprint
+from tolkien_voice.training.render import MacOSSaySynthesizer, render_blueprint, render_corpus
 from tolkien_voice.training.schema import (
     DialogueBlueprint,
     Provenance,
@@ -147,3 +147,22 @@ def test_macos_say_requests_24khz_pcm_wave(monkeypatch: pytest.MonkeyPatch, tmp_
             "Keep watch.",
         ]
     ]
+
+
+def test_parallel_corpus_render_preserves_blueprint_order(tmp_path: Path) -> None:
+    blueprints = [
+        blueprint().model_copy(update={"id": f"aragorn-normal-{index:04d}"})
+        for index in range(8)
+    ]
+
+    def synthesize(_: Utterance, destination: Path) -> None:
+        write_mono_tone(destination)
+
+    rendered = render_corpus(
+        blueprints,
+        tmp_path,
+        synthesizer_for=lambda _: synthesize,
+        workers=4,
+    )
+
+    assert [item.id for item in rendered] == [item.id for item in blueprints]
