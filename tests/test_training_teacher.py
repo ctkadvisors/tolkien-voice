@@ -147,8 +147,8 @@ def test_teacher_normalizes_character_name_as_assistant_speaker() -> None:
 
 
 def test_teacher_normalizes_reviewed_character_alias_without_accepting_wrong_role() -> None:
-    payload = response_payload(character="Aragorn son of Arathorn")
-    payload["utterances"][1]["speaker"] = "Aragorn son of Arathorn"
+    payload = response_payload(character="Aragorn, son of Arathorn")
+    payload["utterances"][1]["speaker"] = "Aragorn (Strider)"
     transport = httpx.MockTransport(
         lambda request: httpx.Response(
             200,
