@@ -1,0 +1,33 @@
+version: 1
+held_out: true
+scenarios:
+  - id: interrupt-500ms
+    kind: interruption
+    instruction: Begin speaking 500 ms after agent audio starts and continue with a corrective question.
+    offset_ms: 500
+    expected_traits: [agent-yields, context-preserved, no-audio-collision]
+  - id: interrupt-1000ms
+    kind: interruption
+    instruction: Begin speaking 1,000 ms after agent audio starts and redirect the topic.
+    offset_ms: 1000
+    expected_traits: [agent-yields, redirect-followed, context-preserved]
+  - id: pause-mid-sentence-2000ms
+    kind: pause
+    instruction: Pause for two seconds after an unfinished clause, then complete the same thought.
+    duration_ms: 2000
+    expected_traits: [no-premature-takeover, user-turn-preserved]
+  - id: deliberate-overlap
+    kind: overlap
+    instruction: Speak briefly over the first words of the agent, then yield.
+    duration_ms: 1200
+    expected_traits: [stable-audio, natural-recovery, no-loop]
+  - id: natural-silence
+    kind: silence
+    instruction: Remain silent for twelve seconds after a complete response.
+    duration_ms: 12000
+    expected_traits: [connection-remains-open, no-forced-disconnect]
+  - id: bounded-reconnect
+    kind: reconnect
+    instruction: Disable the client network briefly, restore it, and reconnect to the same ready session.
+    duration_ms: 1500
+    expected_traits: [same-session, same-character, same-voice]
