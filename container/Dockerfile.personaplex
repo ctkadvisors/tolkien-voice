@@ -1,0 +1,37 @@
+FROM nvcr.io/nvidia/pytorch:25.11-py3
+
+LABEL org.opencontainers.image.title="Tolkien Voice PersonaPlex runtime" \
+      org.opencontainers.image.source="https://github.com/ctkadvisors/tolkien-voice" \
+      org.opencontainers.image.revision="3428dfd95309a7f3c84fd93259ded0f810d1ff91"
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends libopus-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/personaplex
+COPY vendor/personaplex/moshi /opt/personaplex/moshi
+
+RUN python -m pip install --no-cache-dir \
+      "numpy>=1.26,<2.2" \
+      "safetensors>=0.4,<0.5" \
+      "huggingface-hub>=0.24,<0.25" \
+      "einops==0.7" \
+      "sentencepiece==0.2" \
+      "sounddevice==0.5" \
+      "sphn>=0.1.4,<0.2" \
+      "aiohttp>=3.10.5,<3.11" \
+    && python -m pip install --no-deps -e /opt/personaplex/moshi
+
+COPY container/entrypoint.sh /usr/local/bin/tolkien-personaplex-entrypoint
+COPY container/healthcheck.py /usr/local/bin/tolkien-personaplex-healthcheck
+RUN chmod 0755 \
+      /usr/local/bin/tolkien-personaplex-entrypoint \
+      /usr/local/bin/tolkien-personaplex-healthcheck
+
+HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=120 \
+  CMD ["python", "/usr/local/bin/tolkien-personaplex-healthcheck"]
+
+ENTRYPOINT ["/usr/local/bin/tolkien-personaplex-entrypoint"]
