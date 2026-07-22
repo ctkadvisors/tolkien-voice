@@ -1,4 +1,9 @@
-# Tolkien Voice Phase 1 Implementation Plan
+# Tolkien Voice Prompt-Only Harness Plan (Superseded)
+
+> Superseded on 2026-07-22 by
+> `2026-07-22-tolkien-sts-distillation-mvp.md`. This plan implemented useful
+> runtime plumbing but incorrectly excluded the trained Tolkien STS adapter
+> that the user had approved as the first MVP.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

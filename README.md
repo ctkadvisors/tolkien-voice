@@ -1,21 +1,29 @@
 # Tolkien Voice
 
-Tolkien Voice is a private, native full-duplex speech experience built on NVIDIA PersonaPlex. Phase 1 conditions one shared PersonaPlex checkpoint with versioned role and included voice prompts for Gandalf, Sauron, and the initial character roster.
+Tolkien Voice is a private, native full-duplex speech model distilled from the
+existing Tolkien 27B v4 teacher. The first accepted MVP is a trained LoRA on
+the PersonaPlex/Moshi STS backbone that beats the unchanged checkpoint on
+held-out Tolkien persona and lore evaluations while preserving duplex timing.
 
-This baseline does **not** contain a Tolkien fine-tune or LoRA. The existing Tolkien 27B model will be used later as an offline distillation teacher after prompt-only speech behavior is measured.
+The repository currently contains a prompt-only PersonaPlex control arm and
+runtime harness. It does **not yet** contain the trained Tolkien adapter and is
+therefore not a working MVP. The corrective design and implementation plan are
+[Tolkien-native STS distillation](docs/superpowers/specs/2026-07-22-tolkien-sts-distillation-mvp.md)
+and its [execution plan](docs/superpowers/plans/2026-07-22-tolkien-sts-distillation-mvp.md).
 
 The live path is browser audio → PersonaPlex/Moshi → browser audio. It does not insert ASR, a text LLM, or TTS between the speaker and the character.
 
-See the [approved design](docs/superpowers/specs/2026-07-21-tolkien-voice-design.md) and [Phase 1 implementation plan](docs/superpowers/plans/2026-07-21-tolkien-voice.md).
+The previous prompt-only design and plan are retained as a record of the
+runtime plumbing, but are explicitly superseded.
 
-## Phase 1 capabilities
+## Existing control-arm capabilities
 
 - Nine server-owned character cards with restricted included PersonaPlex voices; Sauron is fixed to `NATM3.pt`.
 - One private, full-duplex speech session at a time through the upstream PersonaPlex binary audio protocol.
 - A shared kernel lease with llama-swap's five heavy text routes, so a voice session waits rather than killing coder/Qwen/Gemma/Tolkien inference.
 - Idle cleanup after five disconnected minutes, exact-container shutdown, and no session audio or transcript persistence.
 - Loopback controller/runtime listeners, with private Tailscale HTTPS support and a localhost SSH-tunnel fallback.
-- Held-out persona and duplex evaluation manifests for the future Tolkien-teacher distillation phase.
+- Held-out persona and duplex evaluation manifests that will gate the Tolkien-teacher distillation adapter.
 
 ## Local development
 
