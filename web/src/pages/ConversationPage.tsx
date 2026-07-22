@@ -45,11 +45,6 @@ export function ConversationPage({ session, onEnd }: Props) {
   }, []);
 
   const mayConnect = session.state === "ready" || session.state === "disconnected";
-  useEffect(() => {
-    if (mayConnect && audioState === "idle") {
-      void prepareAudio();
-    }
-  }, [audioState, mayConnect, prepareAudio]);
 
   useEffect(() => () => {
     worklet.current?.disconnect();
@@ -74,6 +69,20 @@ export function ConversationPage({ session, onEnd }: Props) {
         detail="PersonaPlex is loading and warming its duplex audio streams."
         onEnd={onEnd}
       />
+    );
+  }
+
+  if (mayConnect && audioState === "idle") {
+    return (
+      <WaitingRoom
+        title={`${session.character_name ?? "Your character"} is ready`}
+        detail="Enter when you are ready to start the private microphone and duplex audio stream."
+        onEnd={onEnd}
+      >
+        <button className="secondary-button" type="button" onClick={() => void prepareAudio()}>
+          Enter conversation
+        </button>
+      </WaitingRoom>
     );
   }
 
@@ -138,4 +147,3 @@ function WaitingRoom({
     </main>
   );
 }
-

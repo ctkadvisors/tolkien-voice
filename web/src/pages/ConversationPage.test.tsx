@@ -80,12 +80,32 @@ describe("ConversationPage", () => {
       configurable: true,
       value: { getUserMedia },
     });
+    const user = userEvent.setup();
     render(
       <ConversationPage session={{ ...baseSession, state: "ready" }} onEnd={vi.fn()} />,
     );
 
+    await user.click(screen.getByRole("button", { name: "Enter conversation" }));
     expect(await screen.findByRole("heading", { name: /Microphone access is blocked/ })).toBeVisible();
     expect(screen.getByRole("button", { name: "Try microphone again" })).toBeEnabled();
+  });
+
+  it("requires a fresh user gesture before starting browser audio", async () => {
+    const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [] });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    const user = userEvent.setup();
+    render(
+      <ConversationPage session={{ ...baseSession, state: "ready" }} onEnd={vi.fn()} />,
+    );
+
+    expect(getUserMedia).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Enter conversation" }));
+
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: "End native conversation" })).toBeVisible();
   });
 
   it("ends cleanly and exposes no recording controls", async () => {
@@ -101,6 +121,7 @@ describe("ConversationPage", () => {
       <ConversationPage session={{ ...baseSession, state: "ready" }} onEnd={onEnd} />,
     );
 
+    await user.click(screen.getByRole("button", { name: "Enter conversation" }));
     await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
     await user.click(await screen.findByRole("button", { name: "End native conversation" }));
 
