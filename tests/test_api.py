@@ -15,7 +15,7 @@ from tolkien_voice.session import SessionController
 CARDS = Path(__file__).parents[1] / "configs" / "characters"
 
 
-def make_client() -> TestClient:
+def make_client(*, web_dist: Path | None = None) -> TestClient:
     registry = CharacterRegistry.from_directory(CARDS)
     controller = SessionController(
         registry=registry,
@@ -25,7 +25,11 @@ def make_client() -> TestClient:
         disconnect_idle_seconds=300,
     )
     return TestClient(
-        create_app(session_controller=controller, character_registry=registry)
+        create_app(
+            session_controller=controller,
+            character_registry=registry,
+            web_dist=web_dist,
+        )
     )
 
 
@@ -103,3 +107,20 @@ def test_upstream_url_encodes_server_side_prompt_and_voice() -> None:
         "text_prompt": ["<system> Speak as Gandalf & listen. <system>"],
         "voice_prompt": ["NATM1.pt"],
     }
+
+
+def test_production_bundle_is_served_without_shadowing_api(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (tmp_path / "index.html").write_text("<h1>Tolkien Voice</h1>", encoding="utf-8")
+    (assets / "app.js").write_text("console.log('voice')", encoding="utf-8")
+
+    with make_client(web_dist=tmp_path) as client:
+        page = client.get("/")
+        asset = client.get("/assets/app.js")
+        health = client.get("/api/health")
+
+    assert page.status_code == 200
+    assert "Tolkien Voice" in page.text
+    assert asset.status_code == 200
+    assert health.json()["status"] == "ok"
