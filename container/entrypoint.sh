@@ -34,8 +34,9 @@ server_args=(
   --static none
   --hf-repo nvidia/personaplex-7b-v1
 )
-if [[ -z "${TOLKIEN_VOICE_LORA_WEIGHT:-}" || -z "${TOLKIEN_VOICE_LORA_SHA256:-}" ]]; then
-  echo "A verified LoRA adapter and SHA-256 are required" >&2
+if [[ -n "${TOLKIEN_VOICE_LORA_WEIGHT:-}" && -z "${TOLKIEN_VOICE_LORA_SHA256:-}" ]] || \
+   [[ -z "${TOLKIEN_VOICE_LORA_WEIGHT:-}" && -n "${TOLKIEN_VOICE_LORA_SHA256:-}" ]]; then
+  echo "LoRA adapter path and SHA-256 must both be set or both be absent" >&2
   exit 78
 fi
 

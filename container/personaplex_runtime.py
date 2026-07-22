@@ -43,6 +43,17 @@ def _verify_adapter() -> tuple[Path, str]:
     return path, actual
 
 
+def _optional_adapter() -> tuple[Path, str] | None:
+    weight = os.environ.get("TOLKIEN_VOICE_LORA_WEIGHT", "").strip()
+    digest = os.environ.get("TOLKIEN_VOICE_LORA_SHA256", "").strip()
+    if bool(weight) != bool(digest):
+        raise RuntimeError("LoRA adapter path and SHA-256 must both be set or both be absent")
+    configured_base = os.environ.get("TOLKIEN_VOICE_BASE_REVISION", PINNED_BASE_REVISION)
+    if configured_base != PINNED_BASE_REVISION:
+        raise RuntimeError("runtime base revision does not match pinned PersonaPlex")
+    return _verify_adapter() if weight else None
+
+
 def _patch_model_loader(adapter_path: Path, identity: dict[str, object]) -> None:
     from moshi.models import loaders
 
@@ -92,20 +103,27 @@ def _patch_health_endpoint(identity: dict[str, object]) -> None:
 
 
 def main() -> None:
-    adapter_path, adapter_sha256 = _verify_adapter()
-    identity: dict[str, object] = {
-        "status": "ok",
-        "adapter_sha256": adapter_sha256,
-        "base_revision": PINNED_BASE_REVISION,
-        "merged_projection_pairs": None,
-    }
-    _patch_model_loader(adapter_path, identity)
+    adapter = _optional_adapter()
+    if adapter is None:
+        identity: dict[str, object] = {
+            "status": "ok",
+            "variant": "base",
+            "adapter_sha256": None,
+            "base_revision": PINNED_BASE_REVISION,
+            "merged_projection_pairs": 0,
+        }
+    else:
+        adapter_path, adapter_sha256 = adapter
+        identity = {
+            "status": "ok",
+            "variant": "adapter",
+            "adapter_sha256": adapter_sha256,
+            "base_revision": PINNED_BASE_REVISION,
+            "merged_projection_pairs": None,
+        }
+        _patch_model_loader(adapter_path, identity)
     _patch_health_endpoint(identity)
-    logger.info(
-        "starting PersonaPlex with adapter sha256=%s base_revision=%s",
-        adapter_sha256,
-        PINNED_BASE_REVISION,
-    )
+    logger.info("starting PersonaPlex variant=%s base_revision=%s", identity["variant"], PINNED_BASE_REVISION)
     runpy.run_module("moshi.server", run_name="__main__")
 
 

@@ -172,11 +172,15 @@ def test_server_and_entrypoint_expose_adapter_identity() -> None:
     assert '"adapter_sha256"' in runtime_wrapper
     assert '"base_revision"' in runtime_wrapper
     assert '"merged_projection_pairs"' in runtime_wrapper
+    assert '"variant": "base"' in runtime_wrapper
+    assert '"variant": "adapter"' in runtime_wrapper
     assert "merge_lora_state_dict" in runtime_wrapper
     assert "strict=True" in runtime_wrapper
     assert "TOLKIEN_VOICE_LORA_WEIGHT" in entrypoint
     assert "TOLKIEN_VOICE_LORA_SHA256" in entrypoint
     assert "TOLKIEN_VOICE_BASE_REVISION" in entrypoint
+    assert "both be set or both be absent" in entrypoint
+    assert "A verified LoRA adapter and SHA-256 are required" not in entrypoint
 
 
 def test_native_probe_requires_handshake_and_audio_response() -> None:
