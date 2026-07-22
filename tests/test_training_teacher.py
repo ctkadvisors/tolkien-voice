@@ -96,6 +96,29 @@ def test_teacher_retry_preserves_seed() -> None:
     assert seeds == [99, 99]
 
 
+def test_teacher_normalizes_character_name_as_assistant_speaker() -> None:
+    payload = response_payload(character="Aragorn")
+    payload["utterances"][1]["speaker"] = "aragorn"
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(payload)}}]},
+        )
+    )
+    client = TeacherClient(base_url="http://teacher.test/v1", transport=transport)
+
+    result = client.generate(
+        character="aragorn",
+        character_prompt="Identity: Aragorn.",
+        scenario="Road counsel.",
+        timing=TimingKind.NORMAL,
+        seed=1,
+    )
+
+    assert result.character == "aragorn"
+    assert result.utterances[1].speaker == "assistant"
+
+
 def test_teacher_rejects_malformed_json() -> None:
     transport = httpx.MockTransport(
         lambda request: httpx.Response(

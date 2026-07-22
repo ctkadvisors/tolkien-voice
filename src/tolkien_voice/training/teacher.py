@@ -87,6 +87,7 @@ class TeacherClient:
             raw = json.loads(content)
         except (json.JSONDecodeError, TypeError) as error:
             raise TeacherResponseError("teacher response must be strict JSON without fences") from error
+        raw = _normalize_labels(raw, character)
         try:
             dialogue = TeacherDialogue.model_validate(raw)
         except ValidationError as error:
@@ -138,6 +139,29 @@ def _extract_content(payload: Any) -> str:
     if not isinstance(content, str):
         raise TeacherResponseError("teacher response content must be a string")
     return content
+
+
+def _normalize_labels(payload: Any, requested_character: str) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    normalized = dict(payload)
+    character = normalized.get("character")
+    if isinstance(character, str) and character.casefold() == requested_character.casefold():
+        normalized["character"] = requested_character
+    utterances = normalized.get("utterances")
+    if isinstance(utterances, list):
+        normalized_utterances = []
+        for utterance in utterances:
+            if not isinstance(utterance, dict):
+                normalized_utterances.append(utterance)
+                continue
+            normalized_utterance = dict(utterance)
+            speaker = normalized_utterance.get("speaker")
+            if isinstance(speaker, str) and speaker.casefold() == requested_character.casefold():
+                normalized_utterance["speaker"] = "assistant"
+            normalized_utterances.append(normalized_utterance)
+        normalized["utterances"] = normalized_utterances
+    return normalized
 
 
 def _build_messages(
