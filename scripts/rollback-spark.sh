@@ -5,6 +5,7 @@ readonly install_root=/home/chrisknuteson/tolkien-voice
 readonly service=tolkien-voice.service
 readonly container=tolkien-voice-personaplex
 readonly patcher=$install_root/scripts/patch-llama-swap-config.py
+readonly python_runtime=$install_root/.venv/bin/python
 
 if (( $# != 1 )); then
   echo "usage: rollback-spark.sh LLAMA_SWAP_BACKUP" >&2
@@ -20,6 +21,6 @@ if docker inspect "$container" >/dev/null 2>&1; then
   docker stop --time 20 "$container" >/dev/null
 fi
 
-"$patcher" --restore "$backup"
+"$python_runtime" "$patcher" --restore "$backup"
 
 echo "Tolkien Voice rollback complete. Model images and caches were retained."

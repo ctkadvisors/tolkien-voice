@@ -17,8 +17,8 @@ def test_installer_is_ordered_and_non_destructive() -> None:
         "preflight_model_slot",
         "prepare_data_directories",
         "build_assets",
-        '"$patcher" --check',
-        '"$patcher" --apply',
+        '"$python_runtime" "$patcher" --check',
+        '"$python_runtime" "$patcher" --apply',
         "install_user_service",
         "configure-tailscale-serve.sh",
         "smoke-test.sh",
@@ -38,6 +38,7 @@ def test_installer_is_ordered_and_non_destructive() -> None:
 
     assert "100 * 1024 * 1024" in source
     assert "vendor/personaplex-revision.txt" in source
+    assert "python_runtime=$install_root/.venv/bin/python" in source
     assert "export PATH=/home/chrisknuteson/.local/bin:$PATH" in source
     assert "node --version" in source
     assert "v22." in source
@@ -49,6 +50,7 @@ def test_rollback_targets_only_tolkien_voice_resources() -> None:
     assert "tolkien-voice.service" in source
     assert "tolkien-voice-personaplex" in source
     assert "patch-llama-swap-config.py" in source
+    assert "python_runtime=$install_root/.venv/bin/python" in source
     assert "--restore" in source
     assert 'configure-tailscale-serve.sh" --remove' in source
     for forbidden in (

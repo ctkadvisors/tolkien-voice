@@ -9,6 +9,7 @@ readonly revision_marker=$install_root/vendor/personaplex-revision.txt
 readonly data_root=/home/chrisknuteson/tolkien-voice-data
 readonly secret_file=$data_root/secrets/hf_token
 readonly patcher=$install_root/scripts/patch-llama-swap-config.py
+readonly python_runtime=$install_root/.venv/bin/python
 export PATH=/home/chrisknuteson/.local/bin:$PATH
 
 if [[ $(id -u) -eq 0 ]]; then
@@ -147,8 +148,8 @@ preflight_secret
 preflight_model_slot
 prepare_data_directories
 build_assets
-"$patcher" --check
-"$patcher" --apply
+"$python_runtime" "$patcher" --check
+"$python_runtime" "$patcher" --apply
 flock --unlock 9
 install_user_service
 "$install_root/scripts/configure-tailscale-serve.sh"
