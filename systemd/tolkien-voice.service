@@ -1,0 +1,21 @@
+[Unit]
+Description=Tolkien Voice native speech controller
+After=network-online.target docker.service tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/chrisknuteson/tolkien-voice
+ExecStart=/home/chrisknuteson/tolkien-voice/.venv/bin/tolkien-voice
+ExecStop=/home/chrisknuteson/tolkien-voice/scripts/stop-runtime.sh
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=tolkien-voice
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+Environment=TOLKIEN_VOICE_CONFIG=/home/chrisknuteson/tolkien-voice/configs/runtime.yaml
+
+[Install]
+WantedBy=default.target

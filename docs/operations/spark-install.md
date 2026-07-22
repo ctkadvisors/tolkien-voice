@@ -26,6 +26,8 @@ The ordered installation gate verifies the machine, GPU, Docker, disk, ports, so
 
 The llama-swap backup path is printed during install. Record it for rollback. Backups are named `config.yaml.bak.tolkien-voice-YYYYMMDDTHHMMSSZ` beside the live llama-swap configuration.
 
+The controller binds only `127.0.0.1:8788`; PersonaPlex binds only `127.0.0.1:8998` while a conversation is active. The installer captures the pre-install Serve configuration under `/home/chrisknuteson/tolkien-voice-data/tailscale/`, refuses to replace a nonempty unrecognized mapping, and maps private tailnet HTTPS to the controller. It never creates an internet-facing mapping.
+
 ## Routine checks
 
 ```bash
@@ -36,3 +38,5 @@ tailscale serve status
 ```
 
 PersonaPlex is expected to be absent while idle. The persistent `vllm_embed` container remains ready, and only one heavy text or speech runtime may own the shared lease.
+
+The smoke test validates the nine-character public registry, Sauron's single allowed voice, embedding service continuity, loopback-only listeners, and cleanup. If gated weights have not yet been cached, it reports a clear skip for the synthetic voice startup while still enforcing all non-model checks.

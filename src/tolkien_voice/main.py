@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -17,6 +18,11 @@ from tolkien_voice.settings import RuntimeSettings, load_runtime_settings
 ROOT = Path(__file__).parents[2]
 
 
+def runtime_config_path() -> Path:
+    configured = os.environ.get("TOLKIEN_VOICE_CONFIG")
+    return Path(configured).expanduser().resolve() if configured else ROOT / "configs/runtime.yaml"
+
+
 def create_app(
     *,
     session_controller: SessionController | None = None,
@@ -24,7 +30,7 @@ def create_app(
     settings: RuntimeSettings | None = None,
     web_dist: Path | None = None,
 ) -> FastAPI:
-    runtime_settings = settings or load_runtime_settings(ROOT / "configs/runtime.yaml")
+    runtime_settings = settings or load_runtime_settings(runtime_config_path())
     registry = character_registry or CharacterRegistry.from_directory(
         ROOT / "configs/characters"
     )
