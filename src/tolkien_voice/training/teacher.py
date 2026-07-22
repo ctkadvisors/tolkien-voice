@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
@@ -21,7 +22,9 @@ class TeacherResponseError(ValueError):
 
 
 CHARACTER_ALIASES = {
-    "aragorn": frozenset({"aragorn", "aragorn son of arathorn", "strider", "king elessar"}),
+    "aragorn": frozenset(
+        {"aragorn", "aragorn son of arathorn", "aragorn strider", "strider", "king elessar"}
+    ),
     "sauron": frozenset({"sauron", "sauron the dark lord", "dark lord sauron"}),
 }
 
@@ -167,7 +170,7 @@ def _normalize_labels(payload: Any, requested_character: str) -> Any:
     normalized = dict(payload)
     character = normalized.get("character")
     aliases = CHARACTER_ALIASES.get(requested_character, frozenset({requested_character.casefold()}))
-    if isinstance(character, str) and character.strip().casefold() in aliases:
+    if isinstance(character, str) and _normalize_character_label(character) in aliases:
         normalized["character"] = requested_character
     utterances = normalized.get("utterances")
     if isinstance(utterances, list):
@@ -178,11 +181,15 @@ def _normalize_labels(payload: Any, requested_character: str) -> Any:
                 continue
             normalized_utterance = dict(utterance)
             speaker = normalized_utterance.get("speaker")
-            if isinstance(speaker, str) and speaker.strip().casefold() in aliases:
+            if isinstance(speaker, str) and _normalize_character_label(speaker) in aliases:
                 normalized_utterance["speaker"] = "assistant"
             normalized_utterances.append(normalized_utterance)
         normalized["utterances"] = normalized_utterances
     return normalized
+
+
+def _normalize_character_label(value: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", value.casefold()).split())
 
 
 def _build_messages(

@@ -198,6 +198,13 @@ class MacOSSaySynthesizer:
             ],
             check=True,
         )
+        try:
+            with wave.open(str(destination), "rb") as rendered:
+                frames = rendered.getnframes()
+        except (FileNotFoundError, wave.Error) as error:
+            raise RuntimeError(f"speech synthesizer did not produce a PCM WAV: {destination}") from error
+        if frames == 0:
+            raise RuntimeError(f"speech synthesizer produced zero audio frames: {destination}")
 
 
 def render_corpus(

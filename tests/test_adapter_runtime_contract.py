@@ -184,8 +184,10 @@ def test_server_and_entrypoint_expose_adapter_identity() -> None:
 
 
 def test_native_probe_requires_handshake_and_audio_response() -> None:
-    probe = (ROOT / "scripts/probe-native-session.py").read_text()
+    probe = (ROOT / "src/tolkien_voice/training/native_probe.py").read_text()
 
     assert 'handshake.data != b"\\x00"' in probe
     assert 'await websocket.send_bytes(b"\\x01" + payload)' in probe
-    assert 'return 0 if result["audio_messages"] else 1' in probe
+    assert 'raise RuntimeError("native STS probe returned no audio")' in probe
+    assert '"first_audio_ms"' in probe
+    assert '"underrun_count"' in probe

@@ -129,6 +129,7 @@ def test_macos_say_requests_24khz_pcm_wave(monkeypatch: pytest.MonkeyPatch, tmp_
     def capture(command: list[str], *, check: bool) -> None:
         assert check is True
         commands.append(command)
+        write_mono_tone(Path(command[command.index("-o") + 1]))
 
     monkeypatch.setattr("tolkien_voice.training.render.subprocess.run", capture)
     synthesizer = MacOSSaySynthesizer(user_voice="Samantha", assistant_voice="Daniel")
@@ -147,6 +148,25 @@ def test_macos_say_requests_24khz_pcm_wave(monkeypatch: pytest.MonkeyPatch, tmp_
             "Keep watch.",
         ]
     ]
+
+
+def test_macos_say_rejects_zero_frame_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def empty_output(command: list[str], *, check: bool) -> None:
+        destination = Path(command[command.index("-o") + 1])
+        with wave.open(str(destination), "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(24_000)
+
+    monkeypatch.setattr("tolkien_voice.training.render.subprocess.run", empty_output)
+
+    with pytest.raises(RuntimeError, match="zero audio frames"):
+        MacOSSaySynthesizer(user_voice="Samantha", assistant_voice="Daniel")(
+            Utterance(speaker="user", text="Can you hear me?"),
+            tmp_path / "empty.wav",
+        )
 
 
 def test_parallel_corpus_render_preserves_blueprint_order(tmp_path: Path) -> None:

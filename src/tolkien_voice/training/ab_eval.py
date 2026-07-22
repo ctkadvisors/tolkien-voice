@@ -24,8 +24,8 @@ class ProbeObservation(BaseModel):
     persona_score: float = Field(ge=0, le=1)
     lore_score: float = Field(ge=0, le=1)
     confused_as_other_character: bool
-    first_audio_ms: int = Field(gt=0)
-    interruption_response_ms: int = Field(gt=0)
+    first_audio_ms: int = Field(ge=0)
+    interruption_response_ms: int | None = Field(default=None, gt=0)
     underrun_count: int = Field(ge=0)
     audio_duration_ms: int = Field(gt=0)
 
@@ -179,13 +179,18 @@ def evaluate_ab_release(
 
 
 def _metrics(items: list[ProbeObservation]) -> ArmMetrics:
+    interruption_values = [
+        float(item.interruption_response_ms)
+        for item in items
+        if item.interruption_response_ms is not None
+    ]
     return ArmMetrics(
         persona_mean=fmean(item.persona_score for item in items),
         lore_mean=fmean(item.lore_score for item in items),
         confusion_rate=fmean(float(item.confused_as_other_character) for item in items),
         first_audio_mean_ms=fmean(item.first_audio_ms for item in items),
-        interruption_p95_ms=_percentile(
-            [float(item.interruption_response_ms) for item in items], 0.95
+        interruption_p95_ms=(
+            _percentile(interruption_values, 0.95) if interruption_values else float("inf")
         ),
         underrun_mean=fmean(item.underrun_count for item in items),
     )

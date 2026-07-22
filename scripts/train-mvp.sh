@@ -8,6 +8,7 @@ readonly run_name=mvp-v1-r16-192step
 readonly run_root="$data_root/runs/$run_name"
 readonly model_cache="$data_root/cache/huggingface/hub/models--nvidia--personaplex-7b-v1"
 readonly adapter="$run_root/checkpoints/checkpoint_000192/consolidated/lora.safetensors"
+readonly python_runtime="$repository/.venv/bin/python"
 
 cd "$repository"
 [[ ! -e "$run_root" ]] || {
@@ -27,7 +28,7 @@ for manifest in \
     exit 66
   }
 done
-PYTHONPATH="$repository/src" python3 -m tolkien_voice.training.audit \
+PYTHONPATH="$repository/src" "$python_runtime" -m tolkien_voice.training.audit \
   --blueprints "$dataset_root/dialogues.jsonl" \
   --minimum-per-character 64 \
   --characters aragorn sauron
@@ -57,7 +58,7 @@ scripts/run-with-big-model-lease.sh tolkien-sts-train \
 }
 sha256sum "$adapter" >"$run_root/adapter.sha256"
 chmod 0600 "$run_root/adapter.sha256"
-PYTHONPATH="$repository/src" python3 -m tolkien_voice.training.run_metadata \
+PYTHONPATH="$repository/src" "$python_runtime" -m tolkien_voice.training.run_metadata \
   --run-root "$run_root" \
   --adapter "$adapter" \
   --base-revision "$(basename "$snapshot")" \
