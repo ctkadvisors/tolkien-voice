@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import hashlib
 import json
@@ -230,18 +231,21 @@ def generate_corpus(
     characters: tuple[str, ...],
     count_per_character: int,
     seed: int,
+    workers: int = 1,
 ) -> list[DialogueBlueprint]:
     if count_per_character < 1:
         raise ValueError("count_per_character must be positive")
+    if not 1 <= workers <= 8:
+        raise ValueError("workers must be between 1 and 8")
     registry = CharacterRegistry.from_directory(character_directory)
-    result: list[DialogueBlueprint] = []
+    jobs: list[dict[str, object]] = []
     timing_kinds = tuple(TimingKind)
     for character in characters:
         resolved = registry.resolve(character)
         card_path = character_directory / f"{character}.yaml"
         card_hash = hashlib.sha256(card_path.read_bytes()).hexdigest()
         for index in range(count_per_character):
-            item_seed = seed + len(result)
+            item_seed = seed + len(jobs)
             timing = timing_kinds[index % len(timing_kinds)]
             curriculum = build_curriculum_scenario(character, index)
             scenario = curriculum.text
@@ -254,20 +258,28 @@ def generate_corpus(
                 seed=item_seed,
                 voice_license=VOICE_LICENSE,
             )
-            result.append(
-                generate_blueprint(
-                    client,
-                    dialogue_id=f"{character}-{curriculum.category.value}-{timing.value}-{index:04d}",
-                    character=character,
-                    character_prompt=resolved.text_prompt,
-                    scenario=scenario,
-                    curriculum=curriculum.category,
-                    timing=timing,
-                    split=split,
-                    provenance=provenance,
-                )
+            jobs.append(
+                {
+                    "dialogue_id": (
+                        f"{character}-{curriculum.category.value}-{timing.value}-{index:04d}"
+                    ),
+                    "character": character,
+                    "character_prompt": resolved.text_prompt,
+                    "scenario": scenario,
+                    "curriculum": curriculum.category,
+                    "timing": timing,
+                    "split": split,
+                    "provenance": provenance,
+                }
             )
-    return result
+
+    def run(job: dict[str, object]) -> DialogueBlueprint:
+        return generate_blueprint(client, **job)  # type: ignore[arg-type]
+
+    if workers == 1:
+        return [run(job) for job in jobs]
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="tolkien-teacher") as pool:
+        return list(pool.map(run, jobs))
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -280,6 +292,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--characters", nargs="+", default=["aragorn", "sauron"])
     parser.add_argument("--count-per-character", type=int, default=64)
+    parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=20260722)
     return parser
 
@@ -294,6 +307,7 @@ def main(argv: list[str] | None = None) -> int:
             characters=tuple(args.characters),
             count_per_character=args.count_per_character,
             seed=args.seed,
+            workers=args.workers,
         )
     validate_substantive_corpus(
         blueprints,

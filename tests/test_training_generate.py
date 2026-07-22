@@ -6,6 +6,7 @@ import pytest
 from tolkien_voice.training.generate import (
     CURRICULUM_CATEGORIES,
     build_curriculum_scenario,
+    generate_corpus,
     held_out_prompt_hashes,
     load_held_out_prompts,
     summarize_curriculum,
@@ -19,6 +20,7 @@ from tolkien_voice.training.schema import (
     TimingKind,
     Utterance,
 )
+from tolkien_voice.training.teacher import TeacherDialogue
 
 
 def sample_blueprint() -> DialogueBlueprint:
@@ -133,3 +135,30 @@ def test_substantive_corpus_requires_balance_diversity_and_unique_dialogues() ->
             [*items, items[0].model_copy(update={"id": "aragorn-copy-9999"})],
             minimum_per_character=64,
         )
+
+
+def test_parallel_generation_preserves_deterministic_order_and_seeds() -> None:
+    class FakeTeacher:
+        def generate(self, *, character: str, scenario: str, seed: int, **_: object):
+            return TeacherDialogue(
+                character=character,
+                utterances=[
+                    Utterance(speaker="user", text=f"Question for seed {seed}?"),
+                    Utterance(speaker="assistant", text=f"Response to {scenario}"),
+                ],
+            )
+
+    root = Path(__file__).parents[1]
+    result = generate_corpus(
+        client=FakeTeacher(),  # type: ignore[arg-type]
+        character_directory=root / "configs" / "characters",
+        characters=("aragorn", "sauron"),
+        count_per_character=8,
+        seed=100,
+        workers=4,
+    )
+
+    assert len(result) == 16
+    assert [item.provenance.seed for item in result] == list(range(100, 116))
+    assert [item.character for item in result[:8]] == ["aragorn"] * 8
+    assert [item.character for item in result[8:]] == ["sauron"] * 8
