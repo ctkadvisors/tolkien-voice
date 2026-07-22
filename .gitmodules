@@ -1,3 +1,6 @@
 [submodule "vendor/personaplex"]
 	path = vendor/personaplex
 	url = https://github.com/NVIDIA/personaplex.git
+[submodule "vendor/moshi-finetune"]
+	path = vendor/moshi-finetune
+	url = https://github.com/kyutai-labs/moshi-finetune.git
