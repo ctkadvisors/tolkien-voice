@@ -6,6 +6,7 @@ from tolkien_voice.training.native_probe import (
     ActivityDetector,
     load_user_channel,
     measure_interruption_response,
+    pad_pcm_frame,
     summarize_audio_packets,
 )
 
@@ -83,3 +84,9 @@ def test_activity_detector_requires_consecutive_active_frames() -> None:
     assert detector.append(0.04) is False
     assert detector.append(0.05) is False
     assert detector.append(0.06) is True
+
+
+def test_pcm_frame_is_zero_padded_to_codec_frame_size() -> None:
+    padded = pad_pcm_frame([0.5, -0.25], frame_samples=4)
+
+    assert padded == [0.5, -0.25, 0.0, 0.0]

@@ -1,5 +1,7 @@
 from tolkien_voice.training.judge import JudgeScore
-from tolkien_voice.training.scoring import score_native_rows
+import pytest
+
+from tolkien_voice.training.scoring import order_native_rows, score_native_rows
 
 
 def test_native_rows_are_scored_blindly_and_assembled_for_ab_gate() -> None:
@@ -38,3 +40,38 @@ def test_native_rows_are_scored_blindly_and_assembled_for_ab_gate() -> None:
     assert observations[0].confused_as_other_character is False
     assert calls[0]["seed"] == 90
     assert "blinded_arm" not in calls[0]
+
+
+def test_native_rows_follow_precommitted_blinded_assignment_order() -> None:
+    rows = [
+        {"probe_id": "a", "blinded_arm": "arm-2"},
+        {"probe_id": "b", "blinded_arm": "arm-1"},
+        {"probe_id": "a", "blinded_arm": "arm-1"},
+        {"probe_id": "b", "blinded_arm": "arm-2"},
+    ]
+    assignments = [
+        {"probe_id": "b", "arm": "arm-2", "order": 0},
+        {"probe_id": "a", "arm": "arm-1", "order": 1},
+        {"probe_id": "a", "arm": "arm-2", "order": 2},
+        {"probe_id": "b", "arm": "arm-1", "order": 3},
+    ]
+
+    ordered = order_native_rows(rows, assignments)
+
+    assert [(row["probe_id"], row["blinded_arm"]) for row in ordered] == [
+        ("b", "arm-2"),
+        ("a", "arm-1"),
+        ("a", "arm-2"),
+        ("b", "arm-1"),
+    ]
+
+
+def test_native_row_order_rejects_incomplete_or_duplicate_results() -> None:
+    rows = [
+        {"probe_id": "a", "blinded_arm": "arm-1"},
+        {"probe_id": "a", "blinded_arm": "arm-1"},
+    ]
+    assignments = [{"probe_id": "a", "arm": "arm-1", "order": 0}]
+
+    with pytest.raises(ValueError, match="duplicate"):
+        order_native_rows(rows, assignments)

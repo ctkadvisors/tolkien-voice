@@ -18,6 +18,35 @@ class Judge(Protocol):
     ) -> JudgeScore: ...
 
 
+def order_native_rows(
+    rows: list[dict[str, Any]], assignments: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    indexed: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (str(row.get("probe_id", "")), str(row.get("blinded_arm", "")))
+        if not all(key):
+            raise ValueError("native result requires probe_id and blinded_arm")
+        if key in indexed:
+            raise ValueError(f"duplicate native result: {key[0]} {key[1]}")
+        indexed[key] = row
+
+    ordered_assignments = sorted(assignments, key=lambda item: int(item["order"]))
+    assignment_keys = [
+        (str(item.get("probe_id", "")), str(item.get("arm", "")))
+        for item in ordered_assignments
+    ]
+    if len(assignment_keys) != len(set(assignment_keys)):
+        raise ValueError("duplicate blinded assignment")
+    if set(assignment_keys) != set(indexed):
+        missing = sorted(set(assignment_keys) - set(indexed))
+        unexpected = sorted(set(indexed) - set(assignment_keys))
+        raise ValueError(
+            f"native results do not match blinded assignments; "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    return [indexed[key] for key in assignment_keys]
+
+
 def score_native_rows(
     rows: list[dict[str, Any]], *, judge: Judge, seed: int
 ) -> list[ProbeObservation]:

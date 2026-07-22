@@ -26,6 +26,14 @@ class ActivityDetector:
         return self._active_frames >= self.sustained_frames
 
 
+def pad_pcm_frame(samples: list[float], *, frame_samples: int) -> list[float]:
+    if frame_samples <= 0:
+        raise ValueError("frame_samples must be positive")
+    if len(samples) > frame_samples:
+        raise ValueError("PCM chunk exceeds codec frame size")
+    return [*samples, *([0.0] * (frame_samples - len(samples)))]
+
+
 def load_user_channel(path: Path) -> tuple[int, list[float], float]:
     with wave.open(str(path), "rb") as source:
         if source.getsampwidth() != 2:
@@ -144,7 +152,13 @@ async def probe_native_session(
             frame_samples = round(sample_rate * FRAME_SECONDS)
             stream_samples = [*samples, *([0.0] * round(response_seconds * sample_rate))]
             for offset in range(0, len(stream_samples), frame_samples):
-                frame = np.asarray(stream_samples[offset : offset + frame_samples], dtype=np.float32)
+                frame = np.asarray(
+                    pad_pcm_frame(
+                        stream_samples[offset : offset + frame_samples],
+                        frame_samples=frame_samples,
+                    ),
+                    dtype=np.float32,
+                )
                 writer.append_pcm(frame)
                 payload = writer.read_bytes()
                 if payload:
@@ -250,7 +264,8 @@ async def probe_native_interruption(
             writer = sphn.OpusStreamWriter(sample_rate)
 
             async def send_frame(frame: Any) -> None:
-                writer.append_pcm(np.asarray(frame, dtype=np.float32))
+                values = pad_pcm_frame(list(frame), frame_samples=frame_samples)
+                writer.append_pcm(np.asarray(values, dtype=np.float32))
                 payload = writer.read_bytes()
                 if payload:
                     await websocket.send_bytes(b"\x01" + payload)

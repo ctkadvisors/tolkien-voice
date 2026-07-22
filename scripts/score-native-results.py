@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from tolkien_voice.training.judge import JudgeClient
-from tolkien_voice.training.scoring import score_native_rows
+from tolkien_voice.training.scoring import order_native_rows, score_native_rows
 
 
 def load_rows(paths: list[Path]) -> list[dict]:
@@ -21,12 +21,19 @@ def load_rows(paths: list[Path]) -> list[dict]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Blind-score native STS transcripts")
     parser.add_argument("--input", type=Path, action="append", required=True)
+    parser.add_argument("--assignments", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--base-url", default="http://127.0.0.1:9090/v1")
     parser.add_argument("--model", default="tolkien")
     parser.add_argument("--seed", type=int, default=20260722)
     args = parser.parse_args()
     rows = load_rows(args.input)
+    assignments = [
+        json.loads(line)
+        for line in args.assignments.read_text().splitlines()
+        if line.strip()
+    ]
+    rows = order_native_rows(rows, assignments)
     with JudgeClient(base_url=args.base_url, model=args.model) as judge:
         observations = score_native_rows(rows, judge=judge, seed=args.seed)
     args.output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

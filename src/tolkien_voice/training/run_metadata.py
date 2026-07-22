@@ -16,11 +16,18 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _last_metric(path: Path) -> dict[str, object]:
+def _metric(path: Path, step: int | None = None) -> dict[str, object]:
     rows = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     if not rows:
         raise ValueError(f"training metrics are empty: {path}")
-    payload = json.loads(rows[-1])
+    payloads = [json.loads(row) for row in rows]
+    if step is None:
+        payload = payloads[-1]
+    else:
+        selected = [payload for payload in payloads if payload.get("step") == step]
+        if len(selected) != 1:
+            raise ValueError(f"expected one training metric for step {step}; got {len(selected)}")
+        payload = selected[0]
     return {
         key: payload[key]
         for key in ("step", "loss", "peak_allocated_mem", "wps")
@@ -36,6 +43,8 @@ def write_run_metadata(
     personaplex_revision: str,
     moshi_revision: str,
     trainer_revision: str,
+    metric_step: int | None = None,
+    output_path: Path | None = None,
 ) -> Path:
     run_root = run_root.resolve()
     adapter_path = adapter_path.resolve()
@@ -51,9 +60,12 @@ def write_run_metadata(
         "personaplex_revision": personaplex_revision,
         "moshi_revision": moshi_revision,
         "trainer_revision": trainer_revision,
-        "metrics": _last_metric(run_root / "metrics.train.jsonl"),
+        "metrics": _metric(run_root / "metrics.train.jsonl", metric_step),
     }
-    destination = run_root / "run-metadata.json"
+    destination = (output_path or run_root / "run-metadata.json").resolve()
+    if not destination.is_relative_to(run_root):
+        raise ValueError("metadata output path escapes the training run")
+    destination.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(prefix=".run-metadata.", dir=run_root)
     temporary = Path(temporary_name)
     try:
@@ -77,6 +89,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--personaplex-revision", required=True)
     parser.add_argument("--moshi-revision", required=True)
     parser.add_argument("--trainer-revision", required=True)
+    parser.add_argument("--metric-step", type=int)
+    parser.add_argument("--output", type=Path)
     return parser
 
 
@@ -89,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
         personaplex_revision=args.personaplex_revision,
         moshi_revision=args.moshi_revision,
         trainer_revision=args.trainer_revision,
+        metric_step=args.metric_step,
+        output_path=args.output,
     )
     print(path)
     return 0
