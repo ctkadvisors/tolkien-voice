@@ -1,6 +1,5 @@
 {
-  "model_type": "moshi",
-  "version": "personaplex-7b-v1",
+  "model_type": "personaplex",
   "moshi_name": "model.safetensors",
   "mimi_name": "tokenizer-e351c8d8-checkpoint125.safetensors",
   "tokenizer_name": "tokenizer_spm_32k_3.model",

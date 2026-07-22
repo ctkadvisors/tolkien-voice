@@ -6,7 +6,7 @@ from typing import Any
 
 
 def mimi_codebooks_for_config(config: dict[str, Any]) -> int:
-    if config.get("version") == "personaplex-7b-v1":
+    if config.get("model_type") == "personaplex":
         return 8
     n_q = int(config["n_q"])
     dep_q = int(config["dep_q"])
@@ -29,7 +29,7 @@ def install_personaplex_mimi_patch() -> None:
 
     def get_mimi(checkpoint_info, device: str = "cpu"):
         raw_config = checkpoint_info.raw_config or {}
-        if raw_config.get("version") != "personaplex-7b-v1":
+        if raw_config.get("model_type") != "personaplex":
             return original_get_mimi(checkpoint_info, device=device)
         return load_personaplex_mimi(loaders, checkpoint_info, device)
 

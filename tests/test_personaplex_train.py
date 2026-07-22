@@ -7,7 +7,7 @@ from tolkien_voice.training.personaplex_train import (
 
 
 def test_personaplex_uses_eight_mimi_codebooks_per_stereo_channel() -> None:
-    assert mimi_codebooks_for_config({"version": "personaplex-7b-v1", "dep_q": 16}) == 8
+    assert mimi_codebooks_for_config({"model_type": "personaplex", "dep_q": 16}) == 8
 
 
 def test_non_personaplex_uses_upstream_codebook_rule() -> None:
@@ -26,7 +26,7 @@ def test_load_personaplex_mimi_uses_pinned_moshi_api() -> None:
 
     checkpoint_info = SimpleNamespace(
         mimi_weights="mimi.safetensors",
-        raw_config={"version": "personaplex-7b-v1", "n_q": 16, "dep_q": 16},
+        raw_config={"model_type": "personaplex", "n_q": 16, "dep_q": 16},
     )
 
     result = load_personaplex_mimi(FakeLoaders, checkpoint_info, "cuda")

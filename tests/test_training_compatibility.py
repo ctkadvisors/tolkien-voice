@@ -12,6 +12,8 @@ def test_personaplex_training_config_matches_pinned_nvidia_loader() -> None:
         (REPOSITORY / "configs/training/personaplex-7b-v1.json").read_text()
     )
 
+    assert "version" not in config
+    assert config["model_type"] == "personaplex"
     assert config["moshi_name"] == "model.safetensors"
     assert config["mimi_name"] == "tokenizer-e351c8d8-checkpoint125.safetensors"
     assert config["tokenizer_name"] == "tokenizer_spm_32k_3.model"
