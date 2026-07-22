@@ -39,6 +39,7 @@ def test_training_script_uses_shared_lease_and_non_root_container_user() -> None
     assert "run-with-big-model-lease.sh tolkien-sts-train" in script
     assert '--user "$(id -u):$(id -g)"' in script
     assert "--gpus all" in script
+    assert "--env CUDA_VISIBLE_DEVICES=0" in script
     assert "/home/chrisknuteson/tolkien-voice-data" in script
     assert "docker rm" not in script
 

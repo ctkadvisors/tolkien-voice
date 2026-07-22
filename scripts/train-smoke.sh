@@ -34,6 +34,7 @@ scripts/run-with-big-model-lease.sh tolkien-sts-train \
     --volume "$snapshot:/models:ro" \
     --workdir /workspace \
     --env PYTHONPATH=/workspace/src:/opt/moshi-finetune \
+    --env CUDA_VISIBLE_DEVICES=0 \
     tolkien-voice/trainer:2acc879 \
     torchrun --nproc-per-node 1 \
       -m tolkien_voice.training.personaplex_train \
