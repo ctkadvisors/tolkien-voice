@@ -12,6 +12,10 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/workspace/src:/opt/moshi-finetune
 
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends libopus-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN git clone https://github.com/kyutai-labs/moshi.git /opt/moshi \
     && git -C /opt/moshi checkout "${MOSHI_REVISION}" \
     && test "$(git -C /opt/moshi rev-parse HEAD)" = "${MOSHI_REVISION}"

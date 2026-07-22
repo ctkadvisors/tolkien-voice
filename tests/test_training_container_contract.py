@@ -15,6 +15,7 @@ def test_training_image_pins_upstreams_without_replacing_ngc_torch() -> None:
     assert "torch==2.6" not in dockerfile
     assert "HF_TOKEN" not in dockerfile
     assert "hf_token" not in dockerfile
+    assert "libopus-dev" in dockerfile
 
 
 def test_smoke_config_is_one_small_lora_optimizer_step() -> None:
