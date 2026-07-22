@@ -20,6 +20,12 @@ class TeacherResponseError(ValueError):
     """The teacher returned output that is unsafe to add to training data."""
 
 
+CHARACTER_ALIASES = {
+    "aragorn": frozenset({"aragorn", "aragorn son of arathorn", "strider", "king elessar"}),
+    "sauron": frozenset({"sauron", "sauron the dark lord", "dark lord sauron"}),
+}
+
+
 class TeacherDialogue(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -160,7 +166,8 @@ def _normalize_labels(payload: Any, requested_character: str) -> Any:
         return payload
     normalized = dict(payload)
     character = normalized.get("character")
-    if isinstance(character, str) and character.casefold() == requested_character.casefold():
+    aliases = CHARACTER_ALIASES.get(requested_character, frozenset({requested_character.casefold()}))
+    if isinstance(character, str) and character.strip().casefold() in aliases:
         normalized["character"] = requested_character
     utterances = normalized.get("utterances")
     if isinstance(utterances, list):
@@ -171,7 +178,7 @@ def _normalize_labels(payload: Any, requested_character: str) -> Any:
                 continue
             normalized_utterance = dict(utterance)
             speaker = normalized_utterance.get("speaker")
-            if isinstance(speaker, str) and speaker.casefold() == requested_character.casefold():
+            if isinstance(speaker, str) and speaker.strip().casefold() in aliases:
                 normalized_utterance["speaker"] = "assistant"
             normalized_utterances.append(normalized_utterance)
         normalized["utterances"] = normalized_utterances

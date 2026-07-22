@@ -146,6 +146,29 @@ def test_teacher_normalizes_character_name_as_assistant_speaker() -> None:
     assert result.utterances[1].speaker == "assistant"
 
 
+def test_teacher_normalizes_reviewed_character_alias_without_accepting_wrong_role() -> None:
+    payload = response_payload(character="Aragorn son of Arathorn")
+    payload["utterances"][1]["speaker"] = "Aragorn son of Arathorn"
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(payload)}}]},
+        )
+    )
+    client = TeacherClient(base_url="http://teacher.test/v1", transport=transport)
+
+    result = client.generate(
+        character="aragorn",
+        character_prompt="Identity: Aragorn.",
+        scenario="Road counsel.",
+        timing=TimingKind.NORMAL,
+        seed=1,
+    )
+
+    assert result.character == "aragorn"
+    assert result.utterances[1].speaker == "assistant"
+
+
 def test_teacher_rejects_malformed_json() -> None:
     transport = httpx.MockTransport(
         lambda request: httpx.Response(

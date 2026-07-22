@@ -5,6 +5,7 @@ import pytest
 
 from tolkien_voice.training.generate import (
     CURRICULUM_CATEGORIES,
+    append_blueprint_private,
     build_curriculum_scenario,
     generate_corpus,
     held_out_prompt_hashes,
@@ -139,7 +140,11 @@ def test_substantive_corpus_requires_balance_diversity_and_unique_dialogues() ->
 
 def test_parallel_generation_preserves_deterministic_order_and_seeds() -> None:
     class FakeTeacher:
+        def __init__(self) -> None:
+            self.calls = 0
+
         def generate(self, *, character: str, scenario: str, seed: int, **_: object):
+            self.calls += 1
             return TeacherDialogue(
                 character=character,
                 utterances=[
@@ -149,8 +154,9 @@ def test_parallel_generation_preserves_deterministic_order_and_seeds() -> None:
             )
 
     root = Path(__file__).parents[1]
+    teacher = FakeTeacher()
     result = generate_corpus(
-        client=FakeTeacher(),  # type: ignore[arg-type]
+        client=teacher,  # type: ignore[arg-type]
         character_directory=root / "configs" / "characters",
         characters=("aragorn", "sauron"),
         count_per_character=8,
@@ -162,3 +168,33 @@ def test_parallel_generation_preserves_deterministic_order_and_seeds() -> None:
     assert [item.provenance.seed for item in result] == list(range(100, 116))
     assert [item.character for item in result[:8]] == ["aragorn"] * 8
     assert [item.character for item in result[8:]] == ["sauron"] * 8
+    assert teacher.calls == 16
+
+    resumed_teacher = FakeTeacher()
+    resumed = generate_corpus(
+        client=resumed_teacher,  # type: ignore[arg-type]
+        character_directory=root / "configs" / "characters",
+        characters=("aragorn", "sauron"),
+        count_per_character=8,
+        seed=100,
+        workers=4,
+        existing=result[:5],
+    )
+
+    assert [item.id for item in resumed] == [item.id for item in result]
+    assert resumed_teacher.calls == 11
+
+
+def test_partial_blueprint_append_is_private_and_line_delimited(tmp_path: Path) -> None:
+    destination = tmp_path / "dialogues.jsonl.partial"
+    first = sample_blueprint()
+    second = first.model_copy(update={"id": "sauron-ring-0002"})
+
+    append_blueprint_private(destination, first)
+    append_blueprint_private(destination, second)
+
+    assert destination.stat().st_mode & 0o777 == 0o600
+    assert [json.loads(line)["id"] for line in destination.read_text().splitlines()] == [
+        first.id,
+        second.id,
+    ]

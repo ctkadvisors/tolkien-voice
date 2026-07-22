@@ -8,7 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 import yaml
 
@@ -224,6 +224,33 @@ def write_blueprints_atomic(
     os.replace(temporary, destination)
 
 
+def append_blueprint_private(destination: Path, blueprint: DialogueBlueprint) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(destination, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
+    try:
+        payload = (blueprint.model_dump_json() + "\n").encode("utf-8")
+        os.write(descriptor, payload)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    destination.chmod(0o600)
+
+
+def load_partial_blueprints(path: Path) -> list[DialogueBlueprint]:
+    if not path.exists():
+        return []
+    result: list[DialogueBlueprint] = []
+    with path.open(encoding="utf-8") as source:
+        for line_number, line in enumerate(source, start=1):
+            if not line.strip():
+                continue
+            try:
+                result.append(DialogueBlueprint.model_validate_json(line))
+            except ValueError as error:
+                raise ValueError(f"invalid partial blueprint on line {line_number}: {error}") from error
+    return result
+
+
 def generate_corpus(
     *,
     client: TeacherClient,
@@ -232,6 +259,8 @@ def generate_corpus(
     count_per_character: int,
     seed: int,
     workers: int = 1,
+    existing: list[DialogueBlueprint] | None = None,
+    on_blueprint: Callable[[DialogueBlueprint], None] | None = None,
 ) -> list[DialogueBlueprint]:
     if count_per_character < 1:
         raise ValueError("count_per_character must be positive")
@@ -273,13 +302,44 @@ def generate_corpus(
                 }
             )
 
+    existing_by_id = {item.id: item for item in (existing or [])}
+    if len(existing_by_id) != len(existing or []):
+        raise ValueError("partial corpus contains duplicate dialogue IDs")
+    jobs_by_id = {str(job["dialogue_id"]): job for job in jobs}
+    unknown = set(existing_by_id) - set(jobs_by_id)
+    if unknown:
+        raise ValueError(f"partial corpus contains unexpected IDs: {', '.join(sorted(unknown))}")
+    for item_id, item in existing_by_id.items():
+        job = jobs_by_id[item_id]
+        expected = {
+            "character": job["character"],
+            "scenario": job["scenario"],
+            "curriculum": job["curriculum"],
+            "timing": job["timing"],
+            "split": job["split"],
+            "provenance": job["provenance"],
+        }
+        actual = {field: getattr(item, field) for field in expected}
+        if actual != expected:
+            raise ValueError(f"partial corpus metadata mismatch for {item_id}")
+
     def run(job: dict[str, object]) -> DialogueBlueprint:
         return generate_blueprint(client, **job)  # type: ignore[arg-type]
 
+    missing_jobs = [job for job in jobs if str(job["dialogue_id"]) not in existing_by_id]
     if workers == 1:
-        return [run(job) for job in jobs]
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="tolkien-teacher") as pool:
-        return list(pool.map(run, jobs))
+        generated = map(run, missing_jobs)
+        for item in generated:
+            existing_by_id[item.id] = item
+            if on_blueprint is not None:
+                on_blueprint(item)
+    else:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="tolkien-teacher") as pool:
+            for item in pool.map(run, missing_jobs):
+                existing_by_id[item.id] = item
+                if on_blueprint is not None:
+                    on_blueprint(item)
+    return [existing_by_id[str(job["dialogue_id"])] for job in jobs]
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -300,6 +360,8 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     held_out = load_held_out_prompts(args.held_out)
+    partial = args.output.with_suffix(args.output.suffix + ".partial")
+    existing = load_partial_blueprints(partial)
     with TeacherClient(base_url=args.base_url, model=args.model) as client:
         blueprints = generate_corpus(
             client=client,
@@ -308,6 +370,8 @@ def main(argv: list[str] | None = None) -> int:
             count_per_character=args.count_per_character,
             seed=args.seed,
             workers=args.workers,
+            existing=existing,
+            on_blueprint=lambda item: append_blueprint_private(partial, item),
         )
     validate_substantive_corpus(
         blueprints,
@@ -319,6 +383,7 @@ def main(argv: list[str] | None = None) -> int:
         blueprints,
         reserved_prompt_hashes=held_out_prompt_hashes(held_out),
     )
+    partial.unlink(missing_ok=True)
     print(json.dumps({"output": str(args.output), **summarize_curriculum(blueprints)}))
     return 0
 
