@@ -101,6 +101,14 @@ def test_non_alternating_speakers_are_rejected() -> None:
         DialogueBlueprint.model_validate(payload)
 
 
+def test_dialogue_must_end_with_character_response() -> None:
+    payload = blueprint().model_dump()
+    payload["utterances"] = payload["utterances"][:-1]
+
+    with pytest.raises(ValidationError, match="end with the assistant"):
+        DialogueBlueprint.model_validate(payload)
+
+
 def test_invalid_timing_kind_is_rejected() -> None:
     payload = blueprint().model_dump()
     payload["timing"] = "ramble"

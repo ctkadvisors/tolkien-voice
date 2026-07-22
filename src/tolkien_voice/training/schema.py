@@ -127,6 +127,8 @@ class DialogueBlueprint(BaseModel):
             raise ValueError("dialogue must start with the user")
         if not any(item.speaker == "assistant" for item in self.utterances):
             raise ValueError("dialogue requires an assistant utterance")
+        if self.utterances[-1].speaker != "assistant":
+            raise ValueError("dialogue must end with the assistant")
         for previous, current in zip(self.utterances, self.utterances[1:], strict=False):
             if previous.speaker == current.speaker:
                 raise ValueError("dialogue speakers must alternate")

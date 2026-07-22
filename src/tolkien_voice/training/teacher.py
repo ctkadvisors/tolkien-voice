@@ -220,7 +220,8 @@ def _build_messages(
     system = (
         "Create one short, casual two-speaker dialogue for native speech-model training. "
         "Return exactly one JSON object with keys character and utterances. Each utterance must "
-        "have speaker (user or assistant) and text. Start with user, alternate speakers, use 4-8 "
+        "have speaker (user or assistant) and text. Start with user, alternate speakers, use an "
+        "even total of 4, 6, or 8 utterances, and always end with the assistant. "
         "utterances, keep every assistant reply at 45 words or fewer, preserve the requested "
         "character, and never include stage directions, markdown, commentary, or quoted source "
         "passages. The dialogue must sound speakable and allow natural interruption."
