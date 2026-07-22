@@ -1,5 +1,6 @@
 // Track decoder worker errors to detect failed initialization
 let lastWorkerError: Error | null = null;
+export const DECODER_WORKER_URL = "/assets/decoderWorker.min.js";
 
 // Minimal valid Ogg BOS page with OpusHead header (mono, 48kHz)
 // This triggers the decoder's internal init() to create buffers
@@ -38,9 +39,7 @@ const createWarmupBosPage = (): Uint8Array => {
 
 // Factory function to create a decoder worker with error tracking
 const createWorkerWithErrorTracking = (): Worker => {
-  const worker = new Worker(
-  new URL("/assets/decoderWorker.min.js", import.meta.url),
-);
+  const worker = new Worker(DECODER_WORKER_URL);
   
   // Track errors from the worker
   worker.onerror = (event) => {

@@ -645,7 +645,7 @@ npm --prefix web ci
 npm --prefix web run lint
 npm --prefix web test -- --run
 npm --prefix web run build
-npm --prefix web exec playwright test
+(cd web && npx playwright test)
 uv run pytest -q
 ```
 
@@ -909,7 +909,7 @@ npm --prefix web ci
 npm --prefix web run lint
 npm --prefix web test -- --run
 npm --prefix web run build
-npm --prefix web exec playwright test
+(cd web && npx playwright test)
 shellcheck container/*.sh scripts/*.sh
 git diff --check
 ```

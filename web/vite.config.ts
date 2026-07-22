@@ -1,6 +1,4 @@
 import { defineConfig } from "vite";
-import topLevelAwait from "vite-plugin-top-level-await";
-
 
 export default defineConfig({
   server: {
@@ -12,10 +10,4 @@ export default defineConfig({
       },
     },
   },
-  plugins: [
-    topLevelAwait({
-      promiseExportName: "__tla",
-      promiseImportName: (index) => `__tla_${index}`,
-    }),
-  ],
 });
