@@ -7,6 +7,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .schema import (
+    CurriculumKind,
     DialogueBlueprint,
     Provenance,
     Split,
@@ -106,6 +107,7 @@ def generate_blueprint(
     character: str,
     character_prompt: str,
     scenario: str,
+    curriculum: CurriculumKind = CurriculumKind.GENERAL,
     timing: TimingKind,
     split: Split,
     provenance: Provenance,
@@ -122,6 +124,7 @@ def generate_blueprint(
             id=dialogue_id,
             character=character,
             scenario=scenario,
+            curriculum=curriculum,
             timing=timing,
             split=split,
             utterances=dialogue.utterances,
@@ -173,7 +176,7 @@ def _build_messages(
     system = (
         "Create one short, casual two-speaker dialogue for native speech-model training. "
         "Return exactly one JSON object with keys character and utterances. Each utterance must "
-        "have speaker (user or assistant) and text. Start with user, alternate speakers, use 2-8 "
+        "have speaker (user or assistant) and text. Start with user, alternate speakers, use 4-8 "
         "utterances, keep every assistant reply at 45 words or fewer, preserve the requested "
         "character, and never include stage directions, markdown, commentary, or quoted source "
         "passages. The dialogue must sound speakable and allow natural interruption."

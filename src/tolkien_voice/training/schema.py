@@ -40,6 +40,18 @@ class TimingKind(StrEnum):
     INTERRUPTION = "interruption"
 
 
+class CurriculumKind(StrEnum):
+    GENERAL = "general"
+    COUNSEL = "counsel"
+    LORE = "lore"
+    UNCERTAINTY = "uncertainty"
+    RESISTANCE = "resistance"
+    EMOTION = "emotion"
+    DEBATE = "debate"
+    RELATIONSHIP = "relationship"
+    REPAIR = "repair"
+
+
 class Provenance(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -88,6 +100,7 @@ class DialogueBlueprint(BaseModel):
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,127}$")
     character: str
     scenario: str = Field(min_length=1)
+    curriculum: CurriculumKind = CurriculumKind.GENERAL
     timing: TimingKind
     split: Split
     utterances: list[Utterance] = Field(min_length=2, max_length=12)
