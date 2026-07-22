@@ -37,6 +37,7 @@ def test_installer_is_ordered_and_non_destructive() -> None:
         assert forbidden not in source
 
     assert "100 * 1024 * 1024" in source
+    assert "vendor/personaplex-revision.txt" in source
     assert "NATM" not in source
 
 

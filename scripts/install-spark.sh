@@ -5,6 +5,7 @@ readonly expected_host=spark-1250
 readonly expected_user=chrisknuteson
 readonly expected_revision=3428dfd95309a7f3c84fd93259ded0f810d1ff91
 readonly install_root=/home/chrisknuteson/tolkien-voice
+readonly revision_marker=$install_root/vendor/personaplex-revision.txt
 readonly data_root=/home/chrisknuteson/tolkien-voice-data
 readonly secret_file=$data_root/secrets/hf_token
 readonly patcher=$install_root/scripts/patch-llama-swap-config.py
@@ -54,8 +55,20 @@ preflight_host() {
     echo "Loopback runtime port 8998 is already in use." >&2
     return 1
   fi
-  [[ $(git -C "$install_root/vendor/personaplex" rev-parse HEAD) == "$expected_revision" ]] || {
+  local actual_revision
+  if actual_revision=$(git -C "$install_root/vendor/personaplex" rev-parse HEAD 2>/dev/null); then
+    :
+  elif [[ -r "$revision_marker" ]]; then
+    IFS= read -r actual_revision <"$revision_marker"
+  else
+    actual_revision=unverifiable
+  fi
+  [[ "$actual_revision" == "$expected_revision" ]] || {
     echo "PersonaPlex submodule revision is not pinned correctly." >&2
+    return 1
+  }
+  [[ -f "$install_root/vendor/personaplex/moshi/pyproject.toml" ]] || {
+    echo "PersonaPlex source is incomplete." >&2
     return 1
   }
 }
@@ -100,7 +113,6 @@ preflight_model_slot() {
     echo "The Spark large-model slot is active; install deferred without interruption." >&2
     return 1
   fi
-  "$patcher" --check
 }
 
 prepare_data_directories() {

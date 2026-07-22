@@ -52,4 +52,5 @@ def test_build_script_refuses_unreviewed_upstream_revision() -> None:
 
     assert PIN in source
     assert "git -C vendor/personaplex rev-parse HEAD" in source
+    assert "vendor/personaplex-revision.txt" in source
     assert "tolkien-voice/personaplex:3428dfd" in source
