@@ -66,3 +66,6 @@ def test_smoke_test_covers_idle_privacy_and_cleanup() -> None:
         assert required in source
     assert "SKIP: PersonaPlex weights" in source
     assert "docker stop vllm_embed" not in source
+    assert source.index("/v1/embeddings") < source.index(
+        "docker inspect --format '{{.State.Status}}' vllm_embed"
+    )

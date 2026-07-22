@@ -32,14 +32,14 @@ if docker inspect "$runtime_container" >/dev/null 2>&1; then
   exit 1
 fi
 
-[[ $(docker inspect --format '{{.State.Status}}' vllm_embed) == running ]] || {
-  echo "Persistent embedding runtime is not running." >&2
-  exit 1
-}
 curl -fsS http://127.0.0.1:9090/v1/embeddings \
   -H 'Content-Type: application/json' \
   --data '{"model":"embed","input":"Tolkien Voice smoke test"}' \
   | python3 -c 'import json, sys; assert json.load(sys.stdin)["data"][0]["embedding"]'
+[[ $(docker inspect --format '{{.State.Status}}' vllm_embed) == running ]] || {
+  echo "Persistent embedding runtime is not running." >&2
+  exit 1
+}
 
 listeners=$(ss -H -ltn | awk '{print $4}')
 for public_listener in \

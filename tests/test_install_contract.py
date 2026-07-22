@@ -42,6 +42,8 @@ def test_installer_is_ordered_and_non_destructive() -> None:
     assert "export PATH=/home/chrisknuteson/.local/bin:$PATH" in source
     assert "node --version" in source
     assert "v22." in source
+    assert "Controller did not become healthy" in source
+    assert "for _attempt in {1..30}" in source
     assert "NATM" not in source
 
 

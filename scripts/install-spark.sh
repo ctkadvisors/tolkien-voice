@@ -141,6 +141,15 @@ install_user_service() {
     /home/chrisknuteson/.config/systemd/user/tolkien-voice.service
   systemctl --user daemon-reload
   systemctl --user enable --now tolkien-voice.service
+  for _attempt in {1..30}; do
+    if curl -fsS http://127.0.0.1:8788/api/health >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Controller did not become healthy within 30 seconds." >&2
+  systemctl --user status tolkien-voice.service --no-pager >&2 || true
+  return 1
 }
 
 preflight_host
