@@ -22,6 +22,11 @@ dev = [
   "pytest-cov>=6.2,<7",
   "ruff>=0.12,<1",
 ]
+evaluation = [
+  "aiohttp>=3.10.5,<3.11",
+  "numpy>=1.26,<2.2",
+  "sphn==0.1.12",
+]
 
 [project.scripts]
 tolkien-voice = "tolkien_voice.main:run"
