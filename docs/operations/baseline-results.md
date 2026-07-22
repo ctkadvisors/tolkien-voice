@@ -47,13 +47,16 @@ Captured on 2026-07-22 after installing the gated credential and pinned PersonaP
 | System memory available with both loaded | approximately 90 GiB |
 | Gandalf controller-to-PersonaPlex handshake | passed, native binary kind `0` |
 | Sauron controller-to-PersonaPlex handshake | passed, native binary kind `0` |
+| Gandalf synthetic speech round trip | 90 native audio frames / 20,074 bytes and 29 text frames from a 9-second input window |
 | Sauron prompt routing | Sauron persona plus `NATM3.pt` confirmed in runtime log |
 | Text-route contention during voice | correctly blocked with exit `75`; voice was not evicted |
 | Voice cleanup | exact PersonaPlex container removed, lease released, `vllm_embed` remained running |
 
 The first private evaluation run was created at `/home/chrisknuteson/tolkien-voice-data/eval-runs/20260722T164658Z-3638b8dc` with separate Gandalf and Sauron summaries.
 
-First-audio latency, interruption response, five-minute stability, persona pass rate, lore pass rate, and voice consistency remain **unmeasured** until a human speaks through both sessions. A protocol handshake proves the native STS path and persona/voice routing, but it does not substitute for listening acceptance.
+The synthetic round trip streamed six seconds of the included service speech fixture followed by three seconds of silence. It completed in 10.3 seconds and generated both Opus audio and text frames; the decoded text identified the speaker as Gandalf. This proves speech-in/speech-out inference through the controller, but not subjective audio quality.
+
+First-audio latency, interruption response, five-minute stability, persona pass rate, lore pass rate, and voice consistency remain **unmeasured** until a human speaks through both sessions. Protocol and synthetic checks do not substitute for listening acceptance.
 
 Zero values in generated evaluation summaries mean unmeasured and cannot pass acceptance. The first measured baseline must follow [acceptance-test.md](acceptance-test.md) for both Gandalf and Sauron and be stored under `/home/chrisknuteson/tolkien-voice-data/eval-runs/`, outside Git.
 
