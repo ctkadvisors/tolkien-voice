@@ -40,3 +40,12 @@ def test_training_script_uses_shared_lease_and_non_root_container_user() -> None
     assert "--gpus all" in script
     assert "/home/chrisknuteson/tolkien-voice-data" in script
     assert "docker rm" not in script
+
+
+def test_training_image_builder_accepts_only_git_or_pinned_revision_marker() -> None:
+    script = (REPOSITORY / "scripts/build-training-image.sh").read_text()
+    marker = (REPOSITORY / "vendor/moshi-finetune-revision.txt").read_text().strip()
+
+    assert marker == "2acc879fe7c48f885a18f6cc9548bccb2674d87b"
+    assert "vendor/moshi-finetune-revision.txt" in script
+    assert "Moshi-Finetune revision cannot be verified" in script
