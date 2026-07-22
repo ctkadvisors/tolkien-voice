@@ -14,7 +14,7 @@ See the [approved design](docs/superpowers/specs/2026-07-21-tolkien-voice-design
 - One private, full-duplex speech session at a time through the upstream PersonaPlex binary audio protocol.
 - A shared kernel lease with llama-swap's five heavy text routes, so a voice session waits rather than killing coder/Qwen/Gemma/Tolkien inference.
 - Idle cleanup after five disconnected minutes, exact-container shutdown, and no session audio or transcript persistence.
-- Loopback controller/runtime listeners exposed to the tailnet through private HTTPS only.
+- Loopback controller/runtime listeners, with private Tailscale HTTPS support and a localhost SSH-tunnel fallback.
 - Held-out persona and duplex evaluation manifests for the future Tolkien-teacher distillation phase.
 
 ## Local development
@@ -46,3 +46,5 @@ PersonaPlex startup additionally requires NVIDIA GPU Docker access and the gated
 - [Measured baseline](docs/operations/baseline-results.md)
 
 The install script is fail-closed and must run as `chrisknuteson` on `spark-1250`. It never unloads an active heavy model, stops `vllm_embed`, resets all Tailscale Serve state, or requests a credential in chat. Model weights and the credential remain prerequisites; source installation alone does not produce a working speech session.
+
+The current Spark has the pinned checkpoint cached and has passed native binary handshakes for both Gandalf and Sauron. See the [measured baseline](docs/operations/baseline-results.md) for cold/warm startup and memory results. Human conversational latency and persona quality are intentionally not claimed until the private speech acceptance run is completed.
