@@ -5,13 +5,20 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 import yaml
 
 
 ENV_PREFIX = "TOLKIEN_VOICE_"
 ALLOWED_HF_REPOS = {"nvidia/personaplex-7b-v1"}
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+class AdapterArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: Path
+    metadata_path: Path
 
 
 class RuntimeSettings(BaseModel):
@@ -32,6 +39,22 @@ class RuntimeSettings(BaseModel):
     data_root: Path
     adapter_path: Path | None = None
     adapter_metadata_path: Path | None = None
+    adapter_bank: dict[str, AdapterArtifact] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def adapter_configuration_is_unambiguous(self) -> RuntimeSettings:
+        has_global = self.adapter_path is not None or self.adapter_metadata_path is not None
+        if (self.adapter_path is None) != (self.adapter_metadata_path is None):
+            raise ValueError("adapter path and metadata path must be configured together")
+        if has_global and self.adapter_bank:
+            raise ValueError("global adapter and persona adapter bank are mutually exclusive")
+        for character_id in self.adapter_bank:
+            if not character_id or any(
+                character not in "abcdefghijklmnopqrstuvwxyz0123456789-"
+                for character in character_id
+            ):
+                raise ValueError(f"invalid adapter-bank character ID: {character_id!r}")
+        return self
 
     @field_validator("controller_host")
     @classmethod

@@ -32,7 +32,7 @@ class Lease(Protocol):
 class Runtime(Protocol):
     async def recover(self) -> None: ...
 
-    async def start(self) -> None: ...
+    async def start(self, character_id: str) -> None: ...
 
     async def stop(self) -> None: ...
 
@@ -176,7 +176,7 @@ class SessionController:
                 if self._active is not session:
                     return
                 self._set_state(session, SessionState.LOADING)
-            await self.runtime.start()
+            await self.runtime.start(session.character.id)
             async with self._lock:
                 if self._active is session:
                     self._set_state(session, SessionState.READY)
@@ -246,4 +246,3 @@ class SessionController:
             character_name=session.character.display_name,
             voice_id=session.character.voice_prompt,
         )
-

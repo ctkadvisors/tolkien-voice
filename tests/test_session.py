@@ -45,12 +45,14 @@ class FakeRuntime:
         self.allow_start = asyncio.Event()
         self.allow_start.set()
         self.start_error: Exception | None = None
+        self.characters: list[str] = []
 
     async def recover(self) -> None:
         self.recovered += 1
 
-    async def start(self) -> None:
+    async def start(self, character_id: str) -> None:
         self.started += 1
+        self.characters.append(character_id)
         await self.allow_start.wait()
         if self.start_error is not None:
             raise self.start_error
@@ -81,7 +83,8 @@ def make_controller(
 
 @pytest.mark.asyncio
 async def test_start_returns_immediately_then_reaches_ready() -> None:
-    controller = make_controller()
+    runtime = FakeRuntime()
+    controller = make_controller(runtime=runtime)
 
     created = await controller.start("gandalf", "NATM1.pt")
 
@@ -89,6 +92,7 @@ async def test_start_returns_immediately_then_reaches_ready() -> None:
     assert created.session_id is not None
     await wait_for_state(controller, SessionState.READY)
     assert controller.status().character_id == "gandalf"
+    assert runtime.characters == ["gandalf"]
 
 
 @pytest.mark.asyncio
@@ -204,4 +208,3 @@ async def test_unknown_session_cannot_end_active_session() -> None:
 
     assert controller.status().session_id == started.session_id
     await controller.end(started.session_id or "")
-

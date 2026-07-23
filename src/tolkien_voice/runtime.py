@@ -71,10 +71,10 @@ class PersonaPlexRuntime:
             await self._remove_command()
         self._started = False
 
-    async def start(self) -> None:
+    async def start(self, character_id: str | None = None) -> None:
         self._prepare_directories()
         self._validate_token()
-        result = await self.runner.run(self._docker_run_command(), timeout=60)
+        result = await self.runner.run(self._docker_run_command(character_id), timeout=60)
         if result.exit_code != 0:
             raise RuntimeStartError(
                 "PersonaPlex container failed to launch",
@@ -158,9 +158,14 @@ class PersonaPlexRuntime:
         if mode & 0o077:
             raise RuntimeCredentialError("Hugging Face token must have no group/other access")
 
-    def _validate_adapter(self) -> tuple[Path, str] | None:
-        adapter = self.settings.adapter_path
-        metadata_path = self.settings.adapter_metadata_path
+    def _validate_adapter(self, character_id: str | None = None) -> tuple[Path, str] | None:
+        selected = self.settings.adapter_bank.get(character_id or "")
+        if selected is not None:
+            adapter = selected.path
+            metadata_path = selected.metadata_path
+        else:
+            adapter = self.settings.adapter_path
+            metadata_path = self.settings.adapter_metadata_path
         if adapter is None and metadata_path is None:
             return None
         if adapter is None or metadata_path is None:
@@ -209,7 +214,7 @@ class PersonaPlexRuntime:
         if not candidate.is_relative_to(root):
             raise ValueError(f"runtime path escapes data root: {candidate}")
 
-    def _docker_run_command(self) -> list[str]:
+    def _docker_run_command(self, character_id: str | None = None) -> list[str]:
         self._assert_under_data_root(self.cache_path)
         self._assert_under_data_root(self.token_path)
         command = [
@@ -233,7 +238,7 @@ class PersonaPlexRuntime:
             "--mount",
             f"type=bind,src={self.token_path},dst=/run/secrets/hf_token,readonly",
         ]
-        adapter = self._validate_adapter()
+        adapter = self._validate_adapter(character_id)
         if adapter is not None:
             adapter_path, adapter_sha256 = adapter
             command.extend(

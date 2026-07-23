@@ -1,0 +1,42 @@
+data:
+  train_data: /data/datasets/mvp-v4-persona/aragorn/train.jsonl
+  eval_data: /data/datasets/mvp-v4-persona/aragorn/validation.jsonl
+  shuffle: true
+
+moshi_paths:
+  hf_repo_id: nvidia/personaplex-7b-v1
+  moshi_path: /models/model.safetensors
+  mimi_path: /models/tokenizer-e351c8d8-checkpoint125.safetensors
+  tokenizer_path: /models/tokenizer_spm_32k_3.model
+  config_path: /workspace/configs/training/personaplex-7b-v1.json
+
+full_finetuning: false
+lora:
+  enable: true
+  rank: 64
+  scaling: 2.0
+  ft_embed: false
+
+first_codebook_weight_multiplier: 100.0
+text_padding_weight: 0.1
+duration_sec: 32
+batch_size: 1
+max_steps: 384
+gradient_checkpointing: true
+param_dtype: bfloat16
+optim:
+  lr: 1.0e-6
+  weight_decay: 0.1
+  pct_start: 0.05
+
+seed: 20260726
+log_freq: 1
+eval_freq: 96
+do_eval: true
+do_ckpt: true
+ckpt_freq: 96
+num_ckpt_keep: 4
+save_adapters: true
+overwrite_run_dir: false
+run_dir: /data/runs/mvp-v4-aragorn-r64-384step
+

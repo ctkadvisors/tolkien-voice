@@ -10,6 +10,7 @@ import pytest
 from tests.fakes import FakeCommandRunner, FakeHttpClient
 from tests.test_runtime import install_fake_token, settings_for
 from tolkien_voice.runtime import PERSONAPLEX_BASE_REVISION, PersonaPlexRuntime
+from tolkien_voice.settings import AdapterArtifact
 
 
 ROOT = Path(__file__).parents[1]
@@ -142,7 +143,7 @@ async def test_runtime_mounts_only_a_verified_allowlisted_adapter(tmp_path: Path
     runner = FakeCommandRunner()
     runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([200]))
 
-    await runtime.start()
+    await runtime.start("aragorn")
 
     command = runner.calls[0][0]
     assert f"type=bind,src={adapter},dst=/adapter/lora.safetensors,readonly" in command
@@ -161,7 +162,69 @@ def test_runtime_rejects_adapter_outside_data_root(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="escapes data root"):
-        PersonaPlexRuntime(settings)._validate_adapter()
+        PersonaPlexRuntime(settings)._validate_adapter("aragorn")
+
+
+@pytest.mark.asyncio
+async def test_runtime_selects_verified_adapter_by_character(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    install_fake_token(settings)
+    adapter = settings.data_root / "runs/aragorn/lora.safetensors"
+    adapter.parent.mkdir(parents=True)
+    adapter.write_bytes(b"aragorn adapter")
+    digest = hashlib.sha256(adapter.read_bytes()).hexdigest()
+    metadata = settings.data_root / "runs/aragorn/metadata.json"
+    metadata.write_text(
+        json.dumps(
+            {"base_revision": PERSONAPLEX_BASE_REVISION, "adapter_sha256": digest}
+        )
+    )
+    model_cache = (
+        settings.data_root
+        / "cache/huggingface/hub/models--nvidia--personaplex-7b-v1"
+    )
+    (model_cache / "refs").mkdir(parents=True)
+    (model_cache / "refs/main").write_text(PERSONAPLEX_BASE_REVISION)
+    snapshot = model_cache / "snapshots" / PERSONAPLEX_BASE_REVISION
+    snapshot.mkdir(parents=True)
+    (snapshot / "model.safetensors").write_bytes(b"base")
+    settings = settings.model_copy(
+        update={
+            "adapter_path": None,
+            "adapter_metadata_path": None,
+            "adapter_bank": {
+                "aragorn": AdapterArtifact(path=adapter, metadata_path=metadata),
+            },
+        }
+    )
+    runner = FakeCommandRunner()
+    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([200]))
+
+    await runtime.start("aragorn")
+
+    command = runner.calls[0][0]
+    assert f"type=bind,src={adapter},dst=/adapter/lora.safetensors,readonly" in command
+
+
+@pytest.mark.asyncio
+async def test_untrained_character_uses_base_when_bank_has_no_entry(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path).model_copy(
+        update={
+            "adapter_bank": {
+                "aragorn": AdapterArtifact(
+                    path=tmp_path / "data/aragorn/lora.safetensors",
+                    metadata_path=tmp_path / "data/aragorn/metadata.json",
+                )
+            }
+        }
+    )
+    install_fake_token(settings)
+    runner = FakeCommandRunner()
+    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([200]))
+
+    await runtime.start("gandalf")
+
+    assert "/adapter/lora.safetensors" not in " ".join(runner.calls[0][0])
 
 
 def test_server_and_entrypoint_expose_adapter_identity() -> None:
