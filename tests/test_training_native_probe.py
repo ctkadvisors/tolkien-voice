@@ -7,6 +7,7 @@ from tolkien_voice.training.native_probe import (
     load_user_channel,
     measure_interruption_response,
     pad_pcm_frame,
+    summarize_interruption_text,
     summarize_audio_packets,
 )
 
@@ -74,6 +75,26 @@ def test_interruption_response_is_unmeasured_when_agent_never_yields() -> None:
     )
 
     assert response_ms is None
+
+
+def test_interruption_text_is_split_at_barge_in_with_response_timestamp() -> None:
+    summary = summarize_interruption_text(
+        [(0.90, "The road"), (1.08, " ends."), (1.24, " I will stop.")],
+        barge_in_seconds=1.10,
+    )
+
+    assert summary == {
+        "interruption_text": "The road ends. I will stop.",
+        "post_barge_text": "I will stop.",
+        "first_post_barge_text_ms": 140,
+    }
+
+
+def test_interruption_text_response_is_unmeasured_without_post_barge_tokens() -> None:
+    summary = summarize_interruption_text([(0.90, "Before.")], barge_in_seconds=1.10)
+
+    assert summary["post_barge_text"] == ""
+    assert summary["first_post_barge_text_ms"] is None
 
 
 def test_activity_detector_requires_consecutive_active_frames() -> None:

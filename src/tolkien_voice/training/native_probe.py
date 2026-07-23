@@ -88,6 +88,21 @@ def measure_interruption_response(
     return None
 
 
+def summarize_interruption_text(
+    frames: list[tuple[float, str]], *, barge_in_seconds: float
+) -> dict[str, str | int | None]:
+    post_barge = [(received, text) for received, text in frames if received >= barge_in_seconds]
+    return {
+        "interruption_text": "".join(text for _, text in frames).strip(),
+        "post_barge_text": "".join(text for _, text in post_barge).strip(),
+        "first_post_barge_text_ms": (
+            round(max(0.0, post_barge[0][0] - barge_in_seconds) * 1000)
+            if post_barge
+            else None
+        ),
+    }
+
+
 async def probe_native_session(
     url: str,
     wav_path: Path,
@@ -215,6 +230,8 @@ async def probe_native_interruption(
     output_started = asyncio.Event()
     output_detector = ActivityDetector(threshold=activity_threshold, sustained_frames=3)
     output_frames: list[tuple[float, float]] = []
+    audio_times: list[float] = []
+    text_frames: list[tuple[float, str]] = []
     audio_bytes = bytearray()
     barge_in_seconds: float | None = None
     timeout_seconds = (
@@ -245,9 +262,17 @@ async def probe_native_interruption(
                             return
                         continue
                     payload = message.data
-                    if not payload or payload[0] != 1:
+                    if not payload:
                         continue
                     received_seconds = loop.time() - started
+                    if payload[0] == 2:
+                        text_frames.append(
+                            (received_seconds, payload[1:].decode("utf-8", errors="replace"))
+                        )
+                        continue
+                    if payload[0] != 1:
+                        continue
+                    audio_times.append(received_seconds)
                     audio_bytes.extend(payload[1:])
                     reader.append_bytes(payload[1:])
                     decoded = np.asarray(reader.read_pcm(), dtype=np.float32).reshape(-1)
@@ -302,6 +327,7 @@ async def probe_native_interruption(
         raw_audio_path.write_bytes(audio_bytes)
         raw_audio_path.chmod(0o600)
     assert barge_in_seconds is not None
+    packet_summary = summarize_audio_packets(audio_times)
     return {
         "interruption_response_ms": measure_interruption_response(
             output_frames,
@@ -312,4 +338,7 @@ async def probe_native_interruption(
         "barge_in_ms": round(barge_in_seconds * 1000),
         "output_activity_frames": len(output_frames),
         "interruption_audio_bytes": len(audio_bytes),
+        "interruption_underrun_count": packet_summary["underrun_count"],
+        "interruption_max_packet_gap_ms": packet_summary["max_packet_gap_ms"],
+        **summarize_interruption_text(text_frames, barge_in_seconds=barge_in_seconds),
     }
