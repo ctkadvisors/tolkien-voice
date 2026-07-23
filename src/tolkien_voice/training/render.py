@@ -142,7 +142,12 @@ def _build_timeline(blueprint: DialogueBlueprint, clips: list[array]) -> list[di
                 and utterance.speaker == "user"
                 and previous["speaker"] == "assistant"
             ):
-                start = max(previous["start_sec"] + 0.05, previous["natural_end_sec"] - 0.15)
+                natural_duration = previous["natural_end_sec"] - previous["start_sec"]
+                # Teach real barge-in, not a near-end overlap: interrupt in the
+                # first third of the assistant turn and never later than 1 second.
+                early_offset = min(1.0, max(0.05, natural_duration / 3))
+                early_offset = min(early_offset, max(0.0, natural_duration - 0.05))
+                start = previous["start_sec"] + early_offset
                 previous["end_sec"] = round(min(previous["end_sec"], start + 0.1), 6)
             else:
                 gap = 0.9 if blueprint.timing == TimingKind.PAUSE and index == 1 else 0.35

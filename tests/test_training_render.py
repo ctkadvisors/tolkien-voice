@@ -17,8 +17,14 @@ from tolkien_voice.training.schema import (
 )
 
 
-def write_mono_tone(path: Path, *, sample_rate: int = 24_000, amplitude: int = 1000) -> None:
-    samples = array("h", [amplitude] * (sample_rate // 5))
+def write_mono_tone(
+    path: Path,
+    *,
+    sample_rate: int = 24_000,
+    amplitude: int = 1000,
+    duration_seconds: float = 0.2,
+) -> None:
+    samples = array("h", [amplitude] * round(sample_rate * duration_seconds))
     with wave.open(str(path), "wb") as output:
         output.setnchannels(1)
         output.setsampwidth(2)
@@ -118,7 +124,26 @@ def test_interruption_truncates_assistant_when_user_barges_in(tmp_path: Path) ->
     interrupting_user = alignment["timeline"][2]
 
     assert interrupting_user["start_sec"] < first_assistant["natural_end_sec"]
-    assert first_assistant["end_sec"] <= interrupting_user["start_sec"] + 0.1
+    assert first_assistant["end_sec"] <= interrupting_user["start_sec"] + 0.100001
+
+
+def test_interruption_occurs_early_in_assistant_utterance(tmp_path: Path) -> None:
+    def synthesize(utterance: Utterance, destination: Path) -> None:
+        write_mono_tone(destination, duration_seconds=3.0)
+
+    rendered = render_blueprint(
+        blueprint(TimingKind.INTERRUPTION), tmp_path, synthesize=synthesize
+    )
+    timeline = json.loads(rendered.alignment_path.read_text())["timeline"]
+    first_assistant = timeline[1]
+    interrupting_user = timeline[2]
+    natural_duration = (
+        first_assistant["natural_end_sec"] - first_assistant["start_sec"]
+    )
+    elapsed = interrupting_user["start_sec"] - first_assistant["start_sec"]
+
+    assert 0.5 <= elapsed <= 1.0
+    assert elapsed / natural_duration <= 0.34
 
 
 def test_render_rejects_clipped_source_audio(tmp_path: Path) -> None:

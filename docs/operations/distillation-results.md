@@ -2,7 +2,7 @@
 
 Date: 2026-07-22  
 Hardware: NVIDIA DGX Spark / GB10  
-Status: v3 failed release gates; v4 persona-adapter training prepared; no trained adapter is deployed
+Status: v4 failed release gates; v5 early-barge-in correction is prepared; no trained adapter is deployed
 
 This log records the native speech-to-speech distillation experiments after the
 one-step plumbing smoke test. Private corpora, checkpoints, raw speech, sealed
@@ -146,11 +146,55 @@ copying held-out probe prompts into training. The character adapters retain
 the exact v3 runtime-prompt prefix, 32-second context, rank 64, BF16, and four
 fresh held-out checkpoints. Selection still cannot activate an adapter.
 
+Both persona runs selected step 384. Aragorn's held-out loss improved from
+4.2604 at step 96 to 2.5713 at step 384; Sauron's improved from 5.2486 to
+3.4555. The selected adapter SHA-256 values are
+`4539d03543e468d93cd1e08ef4543f87779f7a38388862809c2a409745f41be0`
+for Aragorn and
+`f8671ce2b41ceb297a19b22de8af37dbde4652dd899b98f3497f3918103ea3a5`
+for Sauron.
+
+The fresh sealed evaluation again collected 12 observations and 24 artifacts
+per arm with no missing measurements. Persona-specific adapters materially
+improved the point estimates, but the run still failed the precommitted gates:
+
+| Metric | Base | v4 adapter bank | Paired delta CI95 |
+| --- | ---: | ---: | ---: |
+| Persona fidelity | 0.3250 | 0.5083 | `[-0.0583, 0.1833, 0.4417]` |
+| Lore accuracy | 0.3000 | 0.4792 | `[-0.0917, 0.1792, 0.4750]` |
+| Cross-persona confusion | 0 | 0 | no regression |
+| Interruption p95 | 2,812 ms | 3,598 ms | must be at most 1,000 ms |
+| Underruns per observation | 1 | 1 | no regression |
+
+The adapter bank produced +56% relative persona and +60% relative lore point
+gains, but neither paired confidence interval excluded zero. The adapter bank
+therefore remained inactive.
+
+## v4 interruption root cause and v5 correction
+
+An audit of the rendered duplex alignments found a training/evaluation
+distribution error. Every nominal interruption example placed the user's
+barge-in only 150 ms before the assistant's *natural end*. Those examples
+taught near-end overlap rather than interruption during active speech, while
+the evaluator interrupts shortly after response onset. Oversampling those
+examples in v4 amplified the wrong behavior.
+
+v5 preserves the successful persona-specific architecture and changes the
+duplex rendering contract: an interruption now begins in the first third of
+the assistant turn and never later than one second after it starts. The
+assistant channel is truncated with only a 100 ms crossfade. A fresh rendering
+of all 128 private dialogues contains 56.39 minutes of audio. Its 32
+interruption examples all begin at 1.000 seconds, between 8% and 23% of the
+assistant's natural turn. All 128 alignments carry the exact runtime persona
+prompt. The old audio is not reused.
+
 ## Reproducibility entry points
 
 - `scripts/train-mvp-v2.sh`: corrected v2 reference run.
 - `scripts/train-mvp-v3.sh`: prompt annotation, corpus audit, v3 training, and
   finite held-out checkpoint selection.
+- `scripts/train-mvp-v5-persona.sh`: corrected-corpus audit, per-character
+  weighted manifest generation, v5 training, and held-out selection.
 - `scripts/prepare-blind-eval.py`: seeded arm sealing and randomized probes.
 - `scripts/collect-native-arm.py`: native full-duplex speech collector.
 - `scripts/score-native-results.py`: sealed Tolkien-judge scoring.

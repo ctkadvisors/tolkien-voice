@@ -15,6 +15,11 @@ V4_CONFIGS = {
     character: ROOT / "configs" / "training" / f"mvp-v4-{character}.yaml"
     for character in ("aragorn", "sauron")
 }
+V5_SCRIPT = ROOT / "scripts" / "train-mvp-v5-persona.sh"
+V5_CONFIGS = {
+    character: ROOT / "configs" / "training" / f"mvp-v5-{character}.yaml"
+    for character in ("aragorn", "sauron")
+}
 
 
 def test_mvp_training_config_is_not_a_smoke_run() -> None:
@@ -146,6 +151,39 @@ def test_mvp_v4_script_builds_weighted_manifests_and_never_activates() -> None:
     assert "tolkien_voice.training.persona_manifest" in source
     assert "tolkien_voice.training.conditioning" in source
     assert 'configs/training/mvp-v4-$character.yaml' in source
+    assert "checkpoint_000384/consolidated/lora.safetensors" in source
+    assert "tolkien_voice.training.select_checkpoint" in source
+    assert "selected-checkpoint-metadata.json" in source
+    assert "active-adapter" not in source
+
+
+def test_mvp_v5_configs_use_corrected_early_barge_in_corpus() -> None:
+    for character, path in V5_CONFIGS.items():
+        payload = yaml.safe_load(path.read_text())
+        root = f"/data/datasets/mvp-v5-persona/{character}"
+
+        assert payload["data"]["train_data"] == f"{root}/train.jsonl"
+        assert payload["data"]["eval_data"] == f"{root}/validation.jsonl"
+        assert payload["duration_sec"] == 32
+        assert payload["max_steps"] == 384
+        assert payload["lora"]["rank"] == 64
+        assert payload["optim"]["lr"] == 1.0e-6
+        assert payload["eval_freq"] == 96
+        assert payload["ckpt_freq"] == 96
+        assert payload["run_dir"] == (
+            f"/data/runs/mvp-v5-{character}-early-barge-r64-384step"
+        )
+
+
+def test_mvp_v5_script_fails_closed_on_corrected_corpus_and_never_activates() -> None:
+    source = V5_SCRIPT.read_text()
+
+    assert "set -Eeuo pipefail" in source
+    assert 'readonly source_dataset="$data_root/datasets/mvp-v5-early-barge"' in source
+    assert 'readonly persona_dataset="$data_root/datasets/mvp-v5-persona/$character"' in source
+    assert "tolkien_voice.training.persona_manifest" in source
+    assert "tolkien_voice.training.conditioning" in source
+    assert 'configs/training/mvp-v5-$character.yaml' in source
     assert "checkpoint_000384/consolidated/lora.safetensors" in source
     assert "tolkien_voice.training.select_checkpoint" in source
     assert "selected-checkpoint-metadata.json" in source
