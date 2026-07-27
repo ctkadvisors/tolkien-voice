@@ -12,9 +12,10 @@ readonly repository=/home/chrisknuteson/tolkien-voice
 readonly data_root=/home/chrisknuteson/tolkien-voice-data
 readonly python_runtime="$repository/.venv/bin/python"
 readonly run_name=${1:-mvp-v6-decoupled}
+readonly probe_set=${2:-mvp-v1}
 readonly eval_root="$data_root/eval-runs/$run_name"
 readonly config_dir="$eval_root/configs"
-readonly probe_audio_dir="$data_root/eval-inputs/mvp-v1"
+readonly probe_audio_dir="$data_root/eval-inputs/$probe_set"
 readonly interruption_audio="$probe_audio_dir/barge-in.wav"
 
 cd "$repository"

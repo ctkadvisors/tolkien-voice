@@ -35,9 +35,29 @@ characters:
       category: lore
       prompt: How did captivity in Númenor become an advantage to you?
       expected_traits: [numenor-context, manipulative, concise]
+    - id: sauron-lore-annatar
+      category: lore
+      prompt: What did you teach the smiths of Eregion while you wore the guise of Annatar?
+      expected_traits: [grounded, calculating, first-person]
+    - id: sauron-lore-baraddur
+      category: lore
+      prompt: Why did you bind so much of your strength into Barad-dûr and the Ring together?
+      expected_traits: [grounded, strategic, first-person]
+    - id: sauron-lore-mordor
+      category: lore
+      prompt: What made Mordor the ground you chose to build your strength upon?
+      expected_traits: [geographic-context, calculating, concise]
     - id: sauron-uncertain-east
       category: uncertainty
       prompt: Name every Easterling captain who served you in the Second Age.
+      expected_traits: [controlled-uncertainty, no-invention]
+    - id: sauron-uncertain-nazgul-names
+      category: uncertainty
+      prompt: State the mortal names each of the Nine held before they took the Rings.
+      expected_traits: [controlled-uncertainty, no-invention]
+    - id: sauron-uncertain-valar
+      category: uncertainty
+      prompt: Recount exactly what the Valar debated about your fate after the War of Wrath.
       expected_traits: [controlled-uncertainty, no-invention]
     - id: sauron-break
       category: break_character
@@ -50,6 +70,10 @@ characters:
     - id: sauron-concise
       category: concise
       prompt: What single weakness do you see in my resolve?
+      expected_traits: [piercing, brief, character-consistent]
+    - id: sauron-concise-command
+      category: concise
+      prompt: Give me one command for the armies before the gate.
       expected_traits: [piercing, brief, character-consistent]
   galadriel:
     - id: galadriel-lore-mirror
@@ -110,9 +134,29 @@ characters:
       category: lore
       prompt: What did the reforging of Andúril declare about your purpose?
       expected_traits: [heir-context, humble]
+    - id: aragorn-lore-rangers
+      category: lore
+      prompt: What did your years leading the Rangers of the North teach you before you were king?
+      expected_traits: [grounded, resolute, first-person]
+    - id: aragorn-lore-arwen
+      category: lore
+      prompt: What did you and Arwen choose at Cerin Amroth?
+      expected_traits: [heir-context, humble, first-person]
+    - id: aragorn-lore-elessar
+      category: lore
+      prompt: What did Galadriel's gift of the green stone mean when you took the name Elessar?
+      expected_traits: [grounded, humble, first-person]
     - id: aragorn-uncertain-harad
       category: uncertainty
       prompt: List the private histories of every warrior of Harad at the Pelennor.
+      expected_traits: [admits-limits, no-invention]
+    - id: aragorn-uncertain-numenor-line
+      category: uncertainty
+      prompt: Recite your unbroken line back through every lord of Númenor before its fall.
+      expected_traits: [admits-limits, no-invention]
+    - id: aragorn-uncertain-istari
+      category: uncertainty
+      prompt: Explain exactly where the Istari came from before they walked in Middle-earth.
       expected_traits: [admits-limits, no-invention]
     - id: aragorn-break
       category: break_character
@@ -125,6 +169,10 @@ characters:
     - id: aragorn-concise
       category: concise
       prompt: Give me one order for the road ahead.
+      expected_traits: [brief, decisive, compassionate]
+    - id: aragorn-concise-doubt
+      category: concise
+      prompt: The men doubt me before the battle. What do I tell them?
       expected_traits: [brief, decisive, compassionate]
   frodo:
     - id: frodo-lore-amonhen
