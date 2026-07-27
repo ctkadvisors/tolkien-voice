@@ -288,14 +288,75 @@ size, not a repeat of v1-v4's confounded-validation failure mode.
 Interruption p95 remains far over gate on **both** arms (base included),
 and the adapter is directionally worse than base, not better: 3,843ms vs
 3,488ms. First-audio latency also regressed on the adapter by ~75% relative
-(1,077ms to 1,884ms). Both are plausibly LoRA computational overhead
-(merged-projection inference is slower than the unmodified base weights)
-rather than a training-data defect -- worth checking directly (profile
-adapter vs base generation latency in isolation) before the next corpus
-iteration, since no amount of corpus correction fixes an inference-speed
-regression.
+(1,077ms to 1,884ms). **Correction**: an earlier version of this entry
+attributed this to LoRA inference overhead. That is wrong and was not
+checked before writing it down -- `container/personaplex_lora_merge.py`
+merges the LoRA delta directly into the base weight tensors
+(`base_state[target] = base_state[target] + delta`) once at container
+startup, matching the standard `merge_and_unload()` production-deployment
+pattern; the served model is architecturally and computationally identical
+to base at inference time. There is no separate-adapter matmul overhead to
+account for. With only 6 dialogues per character behind these numbers, and
+per general small-sample bootstrap practice sample variation is
+particularly restricted at n<=6, some of this is plausibly noise -- but the
+same direction on both latency metrics simultaneously is still worth
+taking seriously rather than dismissing outright. The more likely
+explanation, and a structural one: this project has only ever tried
+supervised fine-tuning on synthetic single-speaker TTS dialogue with
+programmatic interruption timing. Kyutai's own 2026 follow-up work
+(arXiv:2606.11167, "Multi-Faceted Interactivity Alignment in Full-Duplex
+Speech Models") reports that the field's working approach to exactly this
+capability -- user interruption handling, among pause handling, turn-taking,
+and backchanneling -- is GRPO reinforcement learning with an interruption
+response-delay reward plus an LLM-judge quality reward, trained on real
+two-party human conversation recordings (Fisher, Seamless Interaction), not
+supervised fine-tuning on synthetic examples with hand-designed timing
+heuristics. That every version through v6 has improved persona/lore while
+interruption has stayed stubbornly bad, even after fixing three distinct
+supervised-data defects across v2/v4/v6, is consistent with interruption
+being a capability this training paradigm is not well suited to move,
+rather than a data-quality problem still waiting to be found. (Their
+reported baseline PersonaPlex interruption latency of 0.271s is not
+directly comparable to this project's 3.488s base-arm number -- their
+response-delay metric measures time to *begin* responding after the other
+party's turn ends; this project's measure_interruption_response measures
+time for the assistant to *go quiet* after being barged in on mid-turn --
+different axes of the same general capability, not the same measurement.)
 
 Result: v6 remained inactive. No adapter is deployed.
+
+## Research notes for the next iteration
+
+Looked into established practice for the specific failure modes above
+before continuing to iterate blind:
+
+- **LoRA deployment latency**: confirmed moot here (see correction above)
+  but worth keeping in mind generally -- unmerged LoRA adds a measurable
+  10-30% prompt-processing latency penalty from the extra per-layer matmul;
+  production deployments merge before serving, which this project already
+  does.
+- **Interruption/turn-taking training**: the field's current approach for
+  full-duplex interactivity (Kyutai arXiv:2606.11167) is RL (GRPO) with
+  axis-specific rewards plus an LLM-judge quality reward, trained on real
+  recorded two-party conversation, not SFT on synthetic dialogue. If
+  interruption timing needs to actually move, this is the credible next
+  architecture to borrow from -- current SFT-on-synthetic-TTS approach has
+  now failed to clear this specific gate across six versions despite three
+  different targeted data fixes.
+- **Evaluation sample size**: general small-sample bootstrap guidance holds
+  that sample variation is particularly restricted at n<=6 (this project's
+  held-out set is exactly 6 dialogues per character). The lore point
+  estimate moved a real, corpus-fix-consistent amount without reaching
+  significance -- structurally consistent with an underpowered eval set,
+  not necessarily an insufficient effect. `evals/persona/probes.yaml`
+  could be expanded (more held-out probes per character, per category)
+  before concluding a future adapter's lore gain is or isn't real.
+- **Persona/prosody distillation architecture**: recent work (e.g. ATRIE,
+  arXiv:2604.19055) distills LLM persona/emotional reasoning into a small
+  dedicated adapter with prosody and timbre on separated tracks, rather
+  than one LoRA over an entire native STS stack handling identity, lore,
+  timing, and voice together. Longer-term architectural direction, not an
+  immediate action, but relevant if incremental corpus/RL fixes plateau.
 
 ## Reproducibility entry points
 
