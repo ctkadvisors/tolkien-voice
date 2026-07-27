@@ -7,6 +7,7 @@ import json
 import math
 import os
 from pathlib import Path
+import random
 import re
 import string
 import subprocess
@@ -53,7 +54,18 @@ def render_blueprint(
         channel = left if item["speaker"] == "assistant" else right
         start_frame = round(item["start_sec"] * SAMPLE_RATE)
         end_frame = min(round(item["end_sec"] * SAMPLE_RATE), start_frame + len(clip))
-        for target, sample in enumerate(clip[: end_frame - start_frame], start=start_frame):
+        frames_to_mix = end_frame - start_frame
+        fade_frames = 0
+        if item["speaker"] == "assistant" and item["end_sec"] < item["natural_end_sec"]:
+            fade_frames = min(round(0.1 * SAMPLE_RATE), frames_to_mix)
+        fade_start = frames_to_mix - fade_frames
+        fade_denominator = max(fade_frames - 1, 1)
+        for clip_index, (target, sample) in enumerate(
+            zip(range(start_frame, end_frame), clip[:frames_to_mix], strict=True)
+        ):
+            if fade_frames and clip_index >= fade_start:
+                fade_index = clip_index - fade_start
+                sample = round(sample * (fade_frames - 1 - fade_index) / fade_denominator)
             mixed = channel[target] + sample
             if abs(mixed) >= MAX_SAFE_SAMPLE:
                 raise ValueError(f"mixed audio is clipped in {blueprint.id}")
@@ -129,6 +141,7 @@ def _resample(samples: array, source_rate: int, target_rate: int) -> array:
 
 def _build_timeline(blueprint: DialogueBlueprint, clips: list[array]) -> list[dict]:
     timeline: list[dict] = []
+    rng = random.Random(f"{blueprint.id}:{blueprint.provenance.seed}")
     for index, (utterance, clip) in enumerate(zip(blueprint.utterances, clips, strict=True)):
         duration = len(clip) / SAMPLE_RATE
         if not timeline:
@@ -145,7 +158,9 @@ def _build_timeline(blueprint: DialogueBlueprint, clips: list[array]) -> list[di
                 natural_duration = previous["natural_end_sec"] - previous["start_sec"]
                 # Teach real barge-in, not a near-end overlap: interrupt in the
                 # first third of the assistant turn and never later than 1 second.
-                early_offset = min(1.0, max(0.05, natural_duration / 3))
+                early_offset_upper = min(1.0, natural_duration / 3)
+                early_offset_lower = min(0.3, early_offset_upper)
+                early_offset = rng.uniform(early_offset_lower, early_offset_upper)
                 early_offset = min(early_offset, max(0.0, natural_duration - 0.05))
                 start = previous["start_sec"] + early_offset
                 previous["end_sec"] = round(min(previous["end_sec"], start + 0.1), 6)

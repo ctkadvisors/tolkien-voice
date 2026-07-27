@@ -131,19 +131,52 @@ def test_interruption_occurs_early_in_assistant_utterance(tmp_path: Path) -> Non
     def synthesize(utterance: Utterance, destination: Path) -> None:
         write_mono_tone(destination, duration_seconds=3.0)
 
+    offsets: list[float] = []
+    for index in range(6):
+        rendered = render_blueprint(
+            blueprint(TimingKind.INTERRUPTION).model_copy(
+                update={"id": f"aragorn-interruption-{index:04d}"}
+            ),
+            tmp_path,
+            synthesize=synthesize,
+        )
+        timeline = json.loads(rendered.alignment_path.read_text())["timeline"]
+        first_assistant = timeline[1]
+        interrupting_user = timeline[2]
+        natural_duration = first_assistant["natural_end_sec"] - first_assistant["start_sec"]
+        elapsed = interrupting_user["start_sec"] - first_assistant["start_sec"]
+
+        offsets.append(elapsed)
+        assert elapsed <= 1.0
+        assert elapsed <= natural_duration / 3 + 1e-6
+
+    assert len(set(offsets)) > 1
+
+
+def test_interruption_fades_out_assistant_before_truncation(tmp_path: Path) -> None:
+    def synthesize(utterance: Utterance, destination: Path) -> None:
+        write_mono_tone(
+            destination,
+            amplitude=1000 if utterance.speaker == "assistant" else 500,
+            duration_seconds=0.2,
+        )
+
     rendered = render_blueprint(
         blueprint(TimingKind.INTERRUPTION), tmp_path, synthesize=synthesize
     )
     timeline = json.loads(rendered.alignment_path.read_text())["timeline"]
     first_assistant = timeline[1]
-    interrupting_user = timeline[2]
-    natural_duration = (
-        first_assistant["natural_end_sec"] - first_assistant["start_sec"]
-    )
-    elapsed = interrupting_user["start_sec"] - first_assistant["start_sec"]
+    _, samples = read_stereo(rendered.wav_path)
+    left = samples[0::2]
+    start_frame = round(first_assistant["start_sec"] * 24_000)
+    end_frame = round(first_assistant["end_sec"] * 24_000)
+    fade_start = max(start_frame, end_frame - round(0.1 * 24_000))
+    faded_segment = left[fade_start:end_frame]
 
-    assert 0.5 <= elapsed <= 1.0
-    assert elapsed / natural_duration <= 0.34
+    assert fade_start > start_frame
+    assert left[fade_start - 1] == 1000
+    assert any(0 < sample < 1000 for sample in faded_segment)
+    assert faded_segment[-1] == 0
 
 
 def test_render_rejects_clipped_source_audio(tmp_path: Path) -> None:
