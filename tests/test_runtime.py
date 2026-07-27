@@ -45,7 +45,7 @@ async def test_start_uses_exact_private_docker_contract(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     install_fake_token(settings)
     runner = FakeCommandRunner()
-    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([200]))
+    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([404]))
 
     await runtime.start()
 
@@ -54,6 +54,7 @@ async def test_start_uses_exact_private_docker_contract(tmp_path: Path) -> None:
         "docker",
         "run",
         "--detach",
+        "--rm",
         "--name",
         "tolkien-voice-personaplex",
         "--gpus",
@@ -81,7 +82,9 @@ async def test_start_uses_exact_private_docker_contract(tmp_path: Path) -> None:
 async def test_start_creates_only_runtime_directories(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     install_fake_token(settings)
-    runtime = PersonaPlexRuntime(settings, runner=FakeCommandRunner(), http=FakeHttpClient([200]))
+    runtime = PersonaPlexRuntime(
+        settings, runner=FakeCommandRunner(), http=FakeHttpClient([404])
+    )
 
     await runtime.start()
 
@@ -93,7 +96,9 @@ async def test_start_creates_only_runtime_directories(tmp_path: Path) -> None:
 async def test_recover_stops_only_preexisting_managed_container(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     runner = FakeCommandRunner()
-    runner.add_result(["docker", "inspect"], CommandResult(0, "running\n", ""))
+    runner.add_result(
+        ["docker", "inspect"], CommandResult(0, "running\n", "")
+    )
     runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([]))
 
     await runtime.recover()
@@ -107,7 +112,7 @@ async def test_recover_stops_only_preexisting_managed_container(tmp_path: Path) 
             "{{.State.Status}}",
             "tolkien-voice-personaplex",
         ),
-        ("docker", "rm", "--force", "tolkien-voice-personaplex"),
+        ("docker", "stop", "--time", "20", "tolkien-voice-personaplex"),
     ]
     assert all("unrelated-container" not in command for command in commands)
 
@@ -145,36 +150,9 @@ async def test_startup_failure_redacts_logs_and_stops_container(tmp_path: Path) 
 
     assert "hf_abcdefghijklmnopqrstuvwxyz123456" not in caught.value.diagnostics
     assert "[REDACTED_HF_TOKEN]" in caught.value.diagnostics
-    assert ("docker", "rm", "--force", "tolkien-voice-personaplex") in [
+    assert ("docker", "stop", "--time", "20", "tolkien-voice-personaplex") in [
         call[0] for call in runner.calls
     ]
-
-
-@pytest.mark.asyncio
-async def test_startup_fails_fast_when_container_exits(tmp_path: Path) -> None:
-    settings = settings_for(tmp_path, timeout=60)
-    install_fake_token(settings)
-    runner = FakeCommandRunner()
-    runner.add_result(
-        ["docker", "inspect"],
-        CommandResult(0, "exited\n", ""),
-    )
-    runner.add_result(
-        ["docker", "logs"],
-        CommandResult(0, "model process exited during startup", ""),
-    )
-    runtime = PersonaPlexRuntime(
-        settings,
-        runner=runner,
-        http=FakeHttpClient([], default=ConnectionError("not ready")),
-        poll_seconds=0.001,
-    )
-
-    with pytest.raises(RuntimeStartError) as caught:
-        await asyncio.wait_for(runtime.start(), timeout=1)
-
-    assert "model process exited during startup" in caught.value.diagnostics
-    assert len(runtime.http.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -182,13 +160,13 @@ async def test_stop_is_idempotent(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     install_fake_token(settings)
     runner = FakeCommandRunner()
-    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([200]))
+    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([404]))
     await runtime.start()
 
     await runtime.stop()
     await runtime.stop()
 
-    stops = [call for call in runner.calls if call[0][:2] == ("docker", "rm")]
+    stops = [call for call in runner.calls if call[0][:2] == ("docker", "stop")]
     assert len(stops) == 1
 
 

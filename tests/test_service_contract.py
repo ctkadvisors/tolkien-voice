@@ -38,7 +38,7 @@ def test_tailscale_script_is_private_and_scoped() -> None:
     assert "BackendState" in source
     assert "controller=http://127.0.0.1:8788" in source
     assert '"$controller/api/health"' in source
-    assert 'tailscale serve get-config --all >"$baseline"' in source
+    assert 'tailscale serve get-config --all "$baseline"' in source
     assert "tailscale serve --bg --yes 8788" in source
     assert "tailscale serve --https=443 off" in source
     assert "tailscale serve status --json" in source

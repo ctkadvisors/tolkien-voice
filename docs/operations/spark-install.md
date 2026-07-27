@@ -28,25 +28,6 @@ The llama-swap backup path is printed during install. Record it for rollback. Ba
 
 The controller binds only `127.0.0.1:8788`; PersonaPlex binds only `127.0.0.1:8998` while a conversation is active. The installer captures the pre-install Serve configuration under `/home/chrisknuteson/tolkien-voice-data/tailscale/`, refuses to replace a nonempty unrecognized mapping, and maps private tailnet HTTPS to the controller. It never creates an internet-facing mapping.
 
-### Current localhost tunnel fallback
-
-On the 2026-07-22 deployment, Tailscale refused Serve changes until the machine owner grants the unprivileged account operator access. No existing Serve configuration was changed. Until that one-time host action is approved, open the microphone-capable dashboard from the workstation through a localhost tunnel:
-
-```bash
-ssh -fNT -o ExitOnForwardFailure=yes \
-  -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
-  -L 8788:127.0.0.1:8788 chrisknuteson@100.98.79.30
-open http://localhost:8788/
-```
-
-The eventual one-time host action is:
-
-```bash
-sudo tailscale set --operator=chrisknuteson
-```
-
-Afterward, rerun `./scripts/configure-tailscale-serve.sh`. Do not provide a sudo password to this project or paste it into chat.
-
 ## Routine checks
 
 ```bash

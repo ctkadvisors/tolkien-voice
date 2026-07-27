@@ -2,12 +2,7 @@
 
 Date: 2026-07-21
 
-Status: Superseded on 2026-07-22 by `2026-07-22-tolkien-sts-distillation-mvp.md`
-
-> This design incorrectly made prompt-conditioned PersonaPlex the first MVP.
-> The approved product requirement was a Tolkien-trained native STS model.
-> Prompt-only PersonaPlex is retained solely as the control arm and runtime
-> harness; it is not an MVP or acceptance milestone.
+Status: Proposed for implementation
 
 Repository: `ctkadvisors/tolkien-voice` (private)
 
@@ -366,3 +361,4 @@ Deployment changes are additive. Rollback stops and disables the Tolkien Voice
 service, removes its Tailscale proxy route and large-model registration, and
 restores the previous llama-swap configuration from a timestamped backup.
 Existing Qwen, embedding and Tolkien GGUF model files remain untouched.
+
