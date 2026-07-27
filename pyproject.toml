@@ -38,7 +38,6 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 addopts = "--strict-markers --strict-config"
 testpaths = ["tests"]
-markers = ["asyncio: marks tests as async (deselect with '-m \"not asyncio\"')"]
 
 [tool.ruff]
 line-length = 100
