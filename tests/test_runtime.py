@@ -45,7 +45,7 @@ async def test_start_uses_exact_private_docker_contract(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     install_fake_token(settings)
     runner = FakeCommandRunner()
-    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([404]))
+    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([200]))
 
     await runtime.start()
 
@@ -54,7 +54,6 @@ async def test_start_uses_exact_private_docker_contract(tmp_path: Path) -> None:
         "docker",
         "run",
         "--detach",
-        "--rm",
         "--name",
         "tolkien-voice-personaplex",
         "--gpus",
@@ -83,7 +82,7 @@ async def test_start_creates_only_runtime_directories(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     install_fake_token(settings)
     runtime = PersonaPlexRuntime(
-        settings, runner=FakeCommandRunner(), http=FakeHttpClient([404])
+        settings, runner=FakeCommandRunner(), http=FakeHttpClient([200])
     )
 
     await runtime.start()
@@ -130,6 +129,30 @@ async def test_recover_is_noop_when_managed_container_is_absent(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_startup_fails_fast_when_container_exits(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path, timeout=30)
+    install_fake_token(settings)
+    runner = FakeCommandRunner()
+    runner.add_result(["docker", "inspect"], CommandResult(0, "exited\n", ""))
+    runner.add_result(["docker", "logs"], CommandResult(0, "container crashed\n", ""))
+    runtime = PersonaPlexRuntime(
+        settings,
+        runner=runner,
+        http=FakeHttpClient([], default=ConnectionError("not ready")),
+        poll_seconds=10,
+    )
+
+    with pytest.raises(RuntimeStartError) as caught:
+        await asyncio.wait_for(runtime.start(), timeout=2)
+
+    assert "container crashed" in caught.value.diagnostics
+    assert "state=exited" in str(caught.value.__cause__)
+    assert ("docker", "stop", "--time", "20", "tolkien-voice-personaplex") in [
+        call[0] for call in runner.calls
+    ]
+
+
+@pytest.mark.asyncio
 async def test_startup_failure_redacts_logs_and_stops_container(tmp_path: Path) -> None:
     settings = settings_for(tmp_path, timeout=1)
     install_fake_token(settings)
@@ -160,7 +183,7 @@ async def test_stop_is_idempotent(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     install_fake_token(settings)
     runner = FakeCommandRunner()
-    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([404]))
+    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([200]))
     await runtime.start()
 
     await runtime.stop()

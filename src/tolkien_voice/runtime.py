@@ -68,7 +68,7 @@ class PersonaPlexRuntime:
     async def recover(self) -> None:
         result = await self._inspect()
         if result.exit_code == 0:
-            await self._remove_command()
+            await self._stop_command()
         self._started = False
 
     async def start(self, character_id: str | None = None) -> None:
@@ -134,7 +134,7 @@ class PersonaPlexRuntime:
     async def stop(self) -> None:
         if not self._started:
             return
-        await self._remove_command()
+        await self._stop_command()
         self._started = False
 
     def _prepare_directories(self) -> None:
@@ -270,12 +270,13 @@ class PersonaPlexRuntime:
             timeout=10,
         )
 
-    async def _remove_command(self) -> None:
+    async def _stop_command(self) -> None:
         await self.runner.run(
             [
                 "docker",
-                "rm",
-                "--force",
+                "stop",
+                "--time",
+                "20",
                 self.settings.personaplex_container,
             ],
             timeout=30,
