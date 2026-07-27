@@ -106,8 +106,16 @@ class InterruptionRewardResult(BaseModel):
     yield_delay_reward: float
     quality_reward: float
     delay_seconds: float | None  # None only if compute_yield_delay_reward clamped
-    judge_rationale: str
 ```
+
+**Correction made during plan self-review:** this originally also specified a
+`judge_rationale: str` field. Dropped -- `compute_quality_reward` returns
+`persona_score` alone (a clean scalar reward, appropriate for its actual
+future consumer, GRPO in sub-project 3), and the rationale text isn't
+producible from that without either a wasteful second judge call per
+observation or blurring the reward function's return type into something
+that isn't a plain reward. Nothing in this sub-project's scope actually
+needs the rationale text carried through the result type.
 
 ## Data flow
 
