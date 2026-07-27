@@ -1,12 +1,20 @@
+import asyncio
 from array import array
+import math
 from pathlib import Path
+import sys
+from types import ModuleType, SimpleNamespace
 import wave
 
+import pytest
+
+import tolkien_voice.training.native_probe as native_probe
 from tolkien_voice.training.native_probe import (
     ActivityDetector,
     load_user_channel,
     measure_interruption_response,
     pad_pcm_frame,
+    probe_native_session,
     summarize_interruption_text,
     summarize_audio_packets,
 )
@@ -77,6 +85,21 @@ def test_interruption_response_is_unmeasured_when_agent_never_yields() -> None:
     assert response_ms is None
 
 
+def test_interruption_response_ignores_brief_pause_when_agent_resumes() -> None:
+    frames = [(1.00 + index * 0.04, 0.08) for index in range(3)]
+    frames.extend((1.12 + index * 0.04, 0.01) for index in range(10))
+    frames.extend((1.52 + index * 0.04, 0.08) for index in range(2))
+
+    response_ms = measure_interruption_response(
+        frames,
+        barge_in_seconds=1.10,
+        silence_threshold=0.015,
+        sustained_frames=12,
+    )
+
+    assert response_ms is None
+
+
 def test_interruption_text_is_split_at_barge_in_with_response_timestamp() -> None:
     summary = summarize_interruption_text(
         [(0.90, "The road"), (1.08, " ends."), (1.24, " I will stop.")],
@@ -111,3 +134,142 @@ def test_pcm_frame_is_zero_padded_to_codec_frame_size() -> None:
     padded = pad_pcm_frame([0.5, -0.25], frame_samples=4)
 
     assert padded == [0.5, -0.25, 0.0, 0.0]
+
+
+@pytest.mark.asyncio
+async def test_probe_native_session_waits_for_sender_and_measures_real_speech(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wav_path = tmp_path / "probe.wav"
+    frames = array("h", [1000] * 960)
+    with wave.open(str(wav_path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(24_000)
+        output.writeframes(frames.tobytes())
+
+    ws_msg_type = SimpleNamespace(BINARY="binary", CLOSE="close", CLOSED="closed", ERROR="error")
+
+    class FakeMessage:
+        def __init__(self, message_type: str, data: bytes) -> None:
+            self.type = message_type
+            self.data = data
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self._queue: asyncio.Queue[FakeMessage] = asyncio.Queue()
+            self._handshake_sent = False
+            self._send_count = 0
+
+        async def __aenter__(self) -> "FakeWebSocket":
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def receive(self) -> FakeMessage:
+            if not self._handshake_sent:
+                self._handshake_sent = True
+                return FakeMessage(ws_msg_type.BINARY, b"\x00")
+            return await self._queue.get()
+
+        async def send_bytes(self, _data: bytes) -> None:
+            self._send_count += 1
+            await asyncio.sleep(0.02)
+            if self._send_count == 1:
+                await self._queue.put(FakeMessage(ws_msg_type.BINARY, b"\x01silence"))
+            elif self._send_count == 2:
+                await self._queue.put(FakeMessage(ws_msg_type.BINARY, b"\x01silence"))
+            elif self._send_count == 3:
+                await self._queue.put(FakeMessage(ws_msg_type.BINARY, b"\x01speech-1"))
+                await self._queue.put(FakeMessage(ws_msg_type.BINARY, b"\x02tail"))
+                await self._queue.put(FakeMessage(ws_msg_type.BINARY, b"\x01speech-2"))
+                await self._queue.put(FakeMessage(ws_msg_type.BINARY, b"\x01speech-3"))
+
+    websocket = FakeWebSocket()
+
+    class FakeClientSession:
+        async def __aenter__(self) -> "FakeClientSession":
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        def ws_connect(self, *_: object, **__: object) -> FakeWebSocket:
+            return websocket
+
+    class FakeWriter:
+        def __init__(self, sample_rate: int) -> None:
+            self.sample_rate = sample_rate
+
+        def append_pcm(self, _frame: object) -> None:
+            return None
+
+        def read_bytes(self) -> bytes:
+            return b"frame"
+
+    class FakeReader:
+        def __init__(self, sample_rate: int) -> None:
+            self.sample_rate = sample_rate
+            self._payload = b""
+
+        def append_bytes(self, payload: bytes) -> None:
+            self._payload = payload
+
+        def read_pcm(self) -> list[float]:
+            frame_samples = round(self.sample_rate * native_probe.FRAME_SECONDS)
+            value = 0.05 if self._payload.startswith(b"speech") else 0.0
+            return [value] * frame_samples
+
+    fake_aiohttp = ModuleType("aiohttp")
+    fake_aiohttp.ClientSession = FakeClientSession
+    fake_aiohttp.WSMsgType = ws_msg_type
+    fake_numpy = ModuleType("numpy")
+
+    class FakeArray:
+        def __init__(self, values: list[float]) -> None:
+            self._values = values
+
+        @property
+        def size(self) -> int:
+            return len(self._values)
+
+        def reshape(self, _shape: int) -> "FakeArray":
+            return self
+
+        def __getitem__(self, item: slice | int) -> "FakeArray | float":
+            if isinstance(item, slice):
+                return FakeArray(self._values[item])
+            return self._values[item]
+
+        def __iter__(self):
+            return iter(self._values)
+
+    def asarray(values: object, dtype: object | None = None) -> FakeArray:
+        del dtype
+        return FakeArray(list(values))
+
+    def square(values: FakeArray) -> FakeArray:
+        return FakeArray([value * value for value in values])
+
+    def mean(values: FakeArray) -> float:
+        squared = list(values)
+        return sum(squared) / len(squared)
+
+    fake_numpy.asarray = asarray
+    fake_numpy.float32 = "float32"
+    fake_numpy.mean = mean
+    fake_numpy.sqrt = math.sqrt
+    fake_numpy.square = square
+    fake_sphn = ModuleType("sphn")
+    fake_sphn.OpusStreamReader = FakeReader
+    fake_sphn.OpusStreamWriter = FakeWriter
+    monkeypatch.setitem(sys.modules, "aiohttp", fake_aiohttp)
+    monkeypatch.setitem(sys.modules, "numpy", fake_numpy)
+    monkeypatch.setitem(sys.modules, "sphn", fake_sphn)
+
+    summary = await probe_native_session("ws://probe", wav_path, response_seconds=0.08)
+
+    assert summary["audio_messages"] == 5
+    assert summary["text"] == "tail"
+    assert summary["first_audio_ms"] >= 100
