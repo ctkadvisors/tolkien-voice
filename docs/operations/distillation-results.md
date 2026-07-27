@@ -240,6 +240,22 @@ selection) against `mvp-v6-decoupled`, writing to fresh `run_dir`s
 (`mvp-v6-{character}-decoupled-r64-384step`) so the superseded v5 runs are
 left untouched.
 
+Both v6 runs completed on 2026-07-27: aragorn in 28m45s (final held-out loss
+2.255, checkpoint 384 selected, adapter SHA-256
+`4bb7edcc3ac1bb11af12796a365af57d394a692e14e4615d99f7dc3b446fa1d7`), sauron
+in 29m37s (final held-out eval_loss 2.818, eval_perplexity 7.053, checkpoint
+384 selected, adapter SHA-256
+`2485d3778f0011ed21588b6ab4df3f6cf14f3581c382405b2571240e3091caa8`). Both are
+bound to base revision `fdaf4090a61cb315c138a1faee287ffd6c716309`. **Training
+completing cleanly is not evidence the release gate will pass** -- v1 through
+v4 all trained to completion with improving held-out loss and still failed
+the blinded base-vs-adapter comparison. The next step is the same fixed
+evaluation protocol used for v1-v4: `prepare-blind-eval.py` seals the arm
+assignment, `collect-native-arm.py` collects real native speech from both
+base and v6-adapter arms, `score-native-results.py` runs the sealed
+Tolkien-judge scoring, and `report-ab-eval.py` applies the precommitted
+gates. No claim is made here until that report exists.
+
 ## Reproducibility entry points
 
 - `scripts/train-mvp-v2.sh`: corrected v2 reference run.
