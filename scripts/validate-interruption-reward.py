@@ -8,6 +8,24 @@ anything that spends GPU-hours on rollouts scored by it. Requires
 observations collected AFTER src/tolkien_voice/training/native_probe.py's
 output_frames change (Task 1) -- rows collected before that change will be
 skipped with a warning, not silently scored as zero.
+
+The sealed eval's persona_score is produced downstream by
+score-native-results.py, which is not run here and does not share its
+output with this script. Instead, this script approximates that score by
+scoring the same text basis score_native_rows uses -- the full session
+transcript (row["text"]) -- with compute_quality_reward, printed as
+approx_persona_score. This is not bit-for-bit identical to the sealed
+eval's persona_score: the sealed eval uses a per-row seed offset
+(seed + index) while this script uses one constant seed for every row.
+
+For each row this prints known_interruption_response_ms alongside
+yield_delay_reward and approx_persona_score. The former pair will always
+match exactly by construction -- both come from measure_interruption_response
+with the same parameters -- so that comparison alone is a serialization
+round-trip check, not evidence the reward is well-calibrated.
+approx_persona_score is the part of this output actually informative about
+the quality reward's behavior, and is what a human should eyeball for the
+go/no-go sanity check.
 """
 
 from __future__ import annotations
@@ -52,17 +70,25 @@ def main() -> int:
     with JudgeClient(base_url=args.base_url, model=args.model) as judge:
         for row in scoreable:
             frames = [tuple(frame) for frame in row["output_frames"]]
+            observation_window_seconds = row.get("max_wait_seconds")
+            if observation_window_seconds is None:
+                observation_window_seconds = args.observation_window_seconds
+                print(
+                    f"WARNING: {row['probe_id']} ({row['blinded_arm']}) has no "
+                    "max_wait_seconds (collected before that field was added) -- "
+                    f"falling back to --observation-window-seconds={args.observation_window_seconds}."
+                )
             yield_reward = compute_yield_delay_reward(
                 frames,
                 barge_in_seconds=row["barge_in_ms"] / 1000,
-                observation_window_seconds=args.observation_window_seconds,
+                observation_window_seconds=observation_window_seconds,
                 silence_threshold=0.015,
                 sustained_frames=12,
             )
             known_delay_ms = row.get("interruption_response_ms")
             try:
                 quality_reward = compute_quality_reward(
-                    row["interruption_text"],
+                    row["text"],
                     target_character=row["character"],
                     probe_prompt=row["prompt"],
                     expected_traits=row["expected_traits"],
@@ -77,13 +103,16 @@ def main() -> int:
                 quality_reward=quality_reward,
                 delay_seconds=(known_delay_ms / 1000 if known_delay_ms is not None else None),
             )
+            output = result.model_dump()
+            approx_persona_score = output.pop("quality_reward")
             print(
                 json.dumps(
                     {
                         "probe_id": row["probe_id"],
                         "blinded_arm": row["blinded_arm"],
                         "known_interruption_response_ms": known_delay_ms,
-                        **result.model_dump(),
+                        "approx_persona_score": approx_persona_score,
+                        **output,
                     }
                 )
             )
