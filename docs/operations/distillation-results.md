@@ -1,8 +1,10 @@
 # Tolkien-native STS distillation results
 
-Date: 2026-07-22  
-Hardware: NVIDIA DGX Spark / GB10  
-Status: v4 failed release gates; v5 early-barge-in correction is prepared; no trained adapter is deployed
+Date: 2026-07-27
+Hardware: NVIDIA DGX Spark / GB10
+Status: v4 failed release gates; v5 trained against a corrupted corpus and is
+superseded, not evaluated; v6 (corpus generator fix) is prepared; no trained
+adapter is deployed
 
 This log records the native speech-to-speech distillation experiments after the
 one-step plumbing smoke test. Private corpora, checkpoints, raw speech, sealed
@@ -188,13 +190,66 @@ interruption examples all begin at 1.000 seconds, between 8% and 23% of the
 assistant's natural turn. All 128 alignments carry the exact runtime persona
 prompt. The old audio is not reused.
 
+`train-mvp-v5-persona.sh` was subsequently run to completion for both
+characters against that `mvp-v5-early-barge` corpus (`run_dir`s
+`mvp-v5-aragorn-early-barge-r64-384step` and
+`mvp-v5-sauron-early-barge-r64-384step`, both reaching `checkpoint_000384`
+with a selected adapter). Those results are **not reported here and must not
+be evaluated or activated**: an independent review found the `mvp-v5-early-barge`
+corpus itself was corrupted at generation time (see "v5 corpus defect and v6
+correction" below), so any metrics from that run measure the wrong thing. The
+run directories are retained on disk for provenance but superseded.
+
+## v5 corpus defect and v6 correction
+
+A review ahead of committing further GPU time to v5 found the corpus
+generator (`generate.py`), not the trainer, was still broken. Timing-kind
+assignment (`index % len(TimingKind)`) and curriculum assignment (period-8
+cycle) aliased perfectly, so every curriculum position was locked to exactly
+one timing kind for the entire corpus -- concretely, every "lore" dialogue in
+`mvp-v5-early-barge` was also an "interruption" dialogue, and the held-out
+validation split (`index % 8 == 7`) was a single confounded cell: 100%
+interruption x 100% "uncertainty", with "uncertainty" never appearing in
+training at all. This is the most likely root explanation for the whole
+v1-v4 pattern: held-out loss always improved cleanly (the validation slice
+was internally consistent) while the blinded release gate always failed,
+because checkpoint selection was driven by loss on a slice sharing almost
+nothing with what was actually trained. It also meant v5's early-barge-in
+fix was, in practice, applied almost entirely to lore/uncertainty content --
+53% of all lore and uncertainty assistant speech was truncated to ~1.1
+seconds and then oversampled 5x by the persona weighting scheme.
+
+v6 fixes the generator: timing kind is now assigned per curriculum-round
+(`index // len(_CATEGORY_ORDER)`) instead of per curriculum-slot, and the
+train/validation split is stratified across both curriculum and timing.
+`validate_substantive_corpus` now asserts both splits cover every curriculum
+and every timing kind, and rejects confounded coverage outright, so this bug
+class fails loudly at generation time rather than silently at evaluation
+time. A fresh 128-dialogue corpus (`mvp-v6-decoupled`) was generated through
+the real teacher model and rendered through the real synthesizer: every one
+of the 8 curricula now has exactly 2 samples per timing kind (64 per
+character), and the 8-row validation split spans all 8 curricula and all 4
+timings. The persona-weighted training distribution was verified against the
+real rendered audio: 126 weighted rows per character, max single-clip share
+3.3-3.7% (v5/v4: 4.81%, concentrated entirely in lore), and lore's
+interruption-truncated share down to 14-17% (from effectively 100%).
+
+`train-mvp-v6-persona.sh` and `configs/training/mvp-v6-{aragorn,sauron}.yaml`
+run the same architecture (rank 64, 32s crops, BF16, 384 steps, held-out
+selection) against `mvp-v6-decoupled`, writing to fresh `run_dir`s
+(`mvp-v6-{character}-decoupled-r64-384step`) so the superseded v5 runs are
+left untouched.
+
 ## Reproducibility entry points
 
 - `scripts/train-mvp-v2.sh`: corrected v2 reference run.
 - `scripts/train-mvp-v3.sh`: prompt annotation, corpus audit, v3 training, and
   finite held-out checkpoint selection.
 - `scripts/train-mvp-v5-persona.sh`: corrected-corpus audit, per-character
-  weighted manifest generation, v5 training, and held-out selection.
+  weighted manifest generation, v5 training, and held-out selection. Ran
+  against the corrupted `mvp-v5-early-barge` corpus; superseded, see above.
+- `scripts/train-mvp-v6-persona.sh`: same pipeline against the corpus-generator
+  fix (`mvp-v6-decoupled`), writing to fresh `run_dir`s.
 - `scripts/prepare-blind-eval.py`: seeded arm sealing and randomized probes.
 - `scripts/collect-native-arm.py`: native full-duplex speech collector.
 - `scripts/score-native-results.py`: sealed Tolkien-judge scoring.
