@@ -17,6 +17,8 @@ TARGET_CURRICULA = frozenset(
         CurriculumKind.REPAIR,
     }
 )
+LOW_DIVERSITY_INTERRUPTION_MAX_DISTINCT_FILES = 8
+LOW_DIVERSITY_CATEGORY_MAX_REPEAT_WEIGHT = 2
 
 
 def _read_rows(path: Path) -> list[dict[str, Any]]:
@@ -74,6 +76,10 @@ def build_persona_manifests(
     validation = [item for item in selected if item.split == Split.VALIDATION]
     if not training or not validation:
         raise ValueError(f"character {character!r} requires train and validation examples")
+    low_diversity_interruptions = (
+        len({item.id for item in training if item.timing == TimingKind.INTERRUPTION})
+        <= LOW_DIVERSITY_INTERRUPTION_MAX_DISTINCT_FILES
+    )
 
     weighted_rows: list[dict[str, Any]] = []
     for item in training:
@@ -85,7 +91,10 @@ def build_persona_manifests(
         if item.curriculum in TARGET_CURRICULA:
             repeats += 1
         if item.timing == TimingKind.INTERRUPTION:
-            repeats += 3
+            if low_diversity_interruptions:
+                repeats += max(0, LOW_DIVERSITY_CATEGORY_MAX_REPEAT_WEIGHT - repeats)
+            else:
+                repeats += 3
         weighted_rows.extend(dict(row) for _ in range(repeats))
 
     eval_rows: list[dict[str, Any]] = []

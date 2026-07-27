@@ -48,7 +48,7 @@ def write_jsonl(path: Path, rows: list[object]) -> None:
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
 
 
-def test_persona_manifest_filters_and_weights_targeted_examples(tmp_path: Path) -> None:
+def test_persona_manifest_caps_low_diversity_interruption_weight(tmp_path: Path) -> None:
     blueprints = [
         blueprint(
             "aragorn-normal",
@@ -114,12 +114,12 @@ def test_persona_manifest_filters_and_weights_targeted_examples(tmp_path: Path) 
     assert [Path(row["path"]).stem for row in train_rows].count("aragorn-normal") == 1
     assert [Path(row["path"]).stem for row in train_rows].count(
         "aragorn-lore-interrupt"
-    ) == 5
+    ) == 2
     assert [Path(row["path"]).stem for row in eval_rows] == ["aragorn-validation"]
     assert summary == {
         "character": "aragorn",
         "source_train_examples": 2,
-        "weighted_train_rows": 6,
+        "weighted_train_rows": 3,
         "validation_examples": 1,
         "interruption_examples": 1,
         "target_curriculum_examples": 1,
