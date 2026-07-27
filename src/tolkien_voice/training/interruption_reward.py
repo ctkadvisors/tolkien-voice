@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
+from .judge import JudgeClient
 from .native_probe import measure_interruption_response
 
 
@@ -42,3 +45,32 @@ def compute_yield_delay_reward(
     if delay_ms is None:
         return -observation_window_seconds
     return -(delay_ms / 1000)
+
+
+def compute_quality_reward(
+    transcript: str,
+    *,
+    target_character: Literal["aragorn", "sauron"],
+    probe_prompt: str,
+    expected_traits: list[str],
+    judge: JudgeClient,
+    seed: int,
+) -> float:
+    """The judge's persona_score, not an average with lore_score.
+
+    The failure mode this reward exists to prevent is a policy that learns
+    to go silent or generic to trivially maximize the yield-delay reward --
+    persona_score penalizes that directly. Lore accuracy is the SFT side's
+    concern, already covered by the existing training pipeline.
+
+    Raises JudgeClient's existing JudgeResponseError on judge failure rather
+    than substituting a default score -- a caller decides how to handle a
+    bad rollout, this function does not silently guess.
+    """
+    return judge.score(
+        target_character=target_character,
+        probe_prompt=probe_prompt,
+        expected_traits=expected_traits,
+        candidate_transcript=transcript,
+        seed=seed,
+    ).persona_score

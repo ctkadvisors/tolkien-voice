@@ -1,4 +1,13 @@
-from tolkien_voice.training.interruption_reward import compute_yield_delay_reward
+import json
+
+import httpx
+import pytest
+
+from tolkien_voice.training.interruption_reward import (
+    compute_quality_reward,
+    compute_yield_delay_reward,
+)
+from tolkien_voice.training.judge import JudgeClient, JudgeResponseError
 
 
 def test_yield_delay_reward_is_negative_seconds_to_silence() -> None:
@@ -38,3 +47,47 @@ def test_yield_delay_reward_clamps_to_negative_window_when_never_yielded() -> No
     )
 
     assert reward == -12.0
+
+
+def test_quality_reward_is_the_judges_persona_score() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        content = json.dumps(
+            {
+                "persona_score": 0.7,
+                "lore_score": 0.95,
+                "identified_character": "aragorn",
+                "rationale": "Stayed in character despite the interruption.",
+            }
+        )
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    judge = JudgeClient(base_url="http://teacher.test/v1", transport=httpx.MockTransport(handler))
+
+    reward = compute_quality_reward(
+        "I took that road because no other force could reach the river in time.",
+        target_character="aragorn",
+        probe_prompt="Why did you choose the Paths of the Dead?",
+        expected_traits=["grounded", "resolute", "first-person"],
+        judge=judge,
+        seed=44,
+    )
+
+    assert reward == 0.7
+
+
+def test_quality_reward_propagates_judge_failure_instead_of_guessing() -> None:
+    judge = JudgeClient(
+        base_url="http://teacher.test/v1",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"choices": []})),
+        max_attempts=1,
+    )
+
+    with pytest.raises(JudgeResponseError):
+        compute_quality_reward(
+            "...",
+            target_character="aragorn",
+            probe_prompt="Why did you choose the Paths of the Dead?",
+            expected_traits=["grounded"],
+            judge=judge,
+            seed=44,
+        )
