@@ -21,6 +21,15 @@ from tolkien_voice.settings import load_runtime_settings
 async def start(config_path: Path) -> int:
     settings = load_runtime_settings(config_path)
     runtime = PersonaPlexRuntime(settings)
+    # runtime.stop() only stops the container (deliberately, so a crash's logs
+    # survive it -- see docs/operations/distillation-results.md's healthcheck
+    # fix); it never removes it. A stopped container from a prior run/test
+    # left under the same fixed name would make the next `docker run` fail
+    # with a name conflict, so remove any leftover exited container first.
+    await runtime.runner.run(
+        ["docker", "rm", settings.personaplex_container],
+        timeout=15,
+    )
     try:
         await runtime.start()
     except RuntimeStartError as error:
