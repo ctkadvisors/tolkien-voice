@@ -31,6 +31,8 @@ TEACHER_ARTIFACT = "tolkien-27b-v4-q8"
 VOICE_LICENSE = "private-apple-system-voice"
 CURRICULUM_CATEGORIES = frozenset(kind.value for kind in CurriculumKind if kind != "general")
 _CATEGORY_ORDER = tuple(CurriculumKind(category) for category in sorted(CURRICULUM_CATEGORIES))
+_CATEGORY_INDEX = {category: index for index, category in enumerate(_CATEGORY_ORDER)}
+_TIMING_ORDER = tuple(TimingKind)
 _EMPHASES = (
     "Keep the exchange concrete, restrained, and useful.",
     "Let the user disagree once and require a direct answer.",
@@ -131,6 +133,24 @@ def build_curriculum_scenario(character: str, index: int) -> CurriculumScenario:
     return CurriculumScenario(category=category, text=f"{prompt} {emphasis}{suffix}")
 
 
+def _build_timing_kind(index: int) -> TimingKind:
+    if index < 0:
+        raise ValueError("timing index must be non-negative")
+    return _TIMING_ORDER[(index // len(_CATEGORY_ORDER)) % len(_TIMING_ORDER)]
+
+
+def _build_split(curriculum: CurriculumKind, index: int) -> Split:
+    if index < 0:
+        raise ValueError("split index must be non-negative")
+    category_round = index // len(_CATEGORY_ORDER)
+    category_index = _CATEGORY_INDEX[curriculum]
+    return (
+        Split.VALIDATION
+        if category_round % len(_CATEGORY_ORDER) == category_index % len(_TIMING_ORDER)
+        else Split.TRAIN
+    )
+
+
 def summarize_curriculum(blueprints: list[DialogueBlueprint]) -> dict[str, object]:
     characters: dict[str, object] = {}
     for character in sorted({item.character for item in blueprints}):
@@ -169,11 +189,36 @@ def validate_substantive_corpus(
             missing = sorted(CURRICULUM_CATEGORIES - categories)
             raise ValueError(f"{character} curriculum is incomplete: missing {', '.join(missing)}")
         timing = {item.timing for item in selected}
-        if timing != set(TimingKind):
-            raise ValueError(f"{character} timing curriculum is incomplete")
-        validation_count = sum(item.split == Split.VALIDATION for item in selected)
+        if timing != set(_TIMING_ORDER):
+            raise ValueError(f"{character} timing coverage is incomplete")
+        training = [item for item in selected if item.split == Split.TRAIN]
+        validation = [item for item in selected if item.split == Split.VALIDATION]
+        validation_count = len(validation)
         if validation_count < max(1, len(selected) // 10):
             raise ValueError(f"{character} requires at least 10% validation dialogues")
+        training_categories = {item.curriculum.value for item in training}
+        if training_categories != CURRICULUM_CATEGORIES:
+            missing = sorted(CURRICULUM_CATEGORIES - training_categories)
+            raise ValueError(
+                f"{character} training curriculum is incomplete: missing {', '.join(missing)}"
+            )
+        training_timing = {item.timing for item in training}
+        if training_timing != set(_TIMING_ORDER):
+            raise ValueError(f"{character} training timing coverage is incomplete")
+        validation_categories = {item.curriculum.value for item in validation}
+        if len(validation_categories) <= 1:
+            raise ValueError(f"{character} validation curriculum coverage is confounded")
+        validation_timing = {item.timing for item in validation}
+        if len(validation_timing) <= 1:
+            raise ValueError(f"{character} validation timing coverage is confounded")
+        if len(selected) >= len(_CATEGORY_ORDER) * len(_TIMING_ORDER):
+            if validation_categories != CURRICULUM_CATEGORIES:
+                missing = sorted(CURRICULUM_CATEGORIES - validation_categories)
+                raise ValueError(
+                    f"{character} validation curriculum is incomplete: missing {', '.join(missing)}"
+                )
+            if validation_timing != set(_TIMING_ORDER):
+                raise ValueError(f"{character} validation timing coverage is incomplete")
 
 
 def text_hash(value: str) -> str:
@@ -268,17 +313,16 @@ def generate_corpus(
         raise ValueError("workers must be between 1 and 8")
     registry = CharacterRegistry.from_directory(character_directory)
     jobs: list[dict[str, object]] = []
-    timing_kinds = tuple(TimingKind)
     for character in characters:
         resolved = registry.resolve(character)
         card_path = character_directory / f"{character}.yaml"
         card_hash = hashlib.sha256(card_path.read_bytes()).hexdigest()
         for index in range(count_per_character):
             item_seed = seed + len(jobs)
-            timing = timing_kinds[index % len(timing_kinds)]
             curriculum = build_curriculum_scenario(character, index)
+            timing = _build_timing_kind(index)
             scenario = curriculum.text
-            split = Split.VALIDATION if index % 8 == 7 else Split.TRAIN
+            split = _build_split(curriculum.category, index)
             provenance = Provenance(
                 teacher_model=TEACHER_ARTIFACT,
                 teacher_revision=TEACHER_REVISION,

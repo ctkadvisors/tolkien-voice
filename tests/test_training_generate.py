@@ -46,6 +46,20 @@ def sample_blueprint() -> DialogueBlueprint:
     )
 
 
+def scheduled_timing(index: int) -> TimingKind:
+    return list(TimingKind)[(index // len(CURRICULUM_CATEGORIES)) % len(TimingKind)]
+
+
+def scheduled_split(curriculum: str, index: int) -> Split:
+    curriculum_index = sorted(CURRICULUM_CATEGORIES).index(curriculum)
+    category_round = index // len(CURRICULUM_CATEGORIES)
+    return (
+        Split.VALIDATION
+        if category_round % len(CURRICULUM_CATEGORIES) == curriculum_index % len(TimingKind)
+        else Split.TRAIN
+    )
+
+
 def test_held_out_prompts_are_loaded_and_hashed(tmp_path: Path) -> None:
     manifest = tmp_path / "held-out.yaml"
     manifest.write_text(
@@ -107,8 +121,8 @@ def test_substantive_corpus_requires_balance_diversity_and_unique_dialogues() ->
                         "character": character,
                         "scenario": scenario.text,
                         "curriculum": scenario.category,
-                        "timing": list(TimingKind)[index % len(TimingKind)],
-                        "split": Split.VALIDATION if index % 8 == 7 else Split.TRAIN,
+                        "timing": scheduled_timing(index),
+                        "split": scheduled_split(scenario.category.value, index),
                         "utterances": [
                             Utterance(speaker="user", text=f"Question {character} {index}?"),
                             Utterance(
@@ -136,6 +150,42 @@ def test_substantive_corpus_requires_balance_diversity_and_unique_dialogues() ->
             [*items, items[0].model_copy(update={"id": "aragorn-copy-9999"})],
             minimum_per_character=64,
         )
+
+
+def test_generated_corpus_breaks_curriculum_timing_alias_and_spreads_validation() -> None:
+    class FakeTeacher:
+        def generate(self, *, character: str, scenario: str, seed: int, **_: object):
+            return TeacherDialogue(
+                character=character,
+                utterances=[
+                    Utterance(speaker="user", text=f"Question for {character} seed {seed}?"),
+                    Utterance(speaker="assistant", text=f"Response to {scenario}"),
+                ],
+            )
+
+    root = Path(__file__).parents[1]
+    result = generate_corpus(
+        client=FakeTeacher(),  # type: ignore[arg-type]
+        character_directory=root / "configs" / "characters",
+        characters=("aragorn", "sauron"),
+        count_per_character=64,
+        seed=100,
+        workers=1,
+    )
+
+    validate_substantive_corpus(result, minimum_per_character=64)
+
+    for character in ("aragorn", "sauron"):
+        selected = [item for item in result if item.character == character]
+        timings_by_curriculum = {
+            curriculum: {item.timing for item in selected if item.curriculum.value == curriculum}
+            for curriculum in CURRICULUM_CATEGORIES
+        }
+        validation = [item for item in selected if item.split == Split.VALIDATION]
+
+        assert all(timings == set(TimingKind) for timings in timings_by_curriculum.values())
+        assert {item.curriculum.value for item in validation} == CURRICULUM_CATEGORIES
+        assert {item.timing for item in validation} == set(TimingKind)
 
 
 def test_parallel_generation_preserves_deterministic_order_and_seeds() -> None:
