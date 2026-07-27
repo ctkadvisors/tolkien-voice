@@ -2,9 +2,10 @@
 
 Date: 2026-07-27
 Hardware: NVIDIA DGX Spark / GB10
-Status: v4 failed release gates; v5 trained against a corrupted corpus and is
-superseded, not evaluated; v6 (corpus generator fix) is prepared; no trained
-adapter is deployed
+Status: v6 failed release gates (lore significance, interruption p95,
+first-audio latency); persona fidelity cleared its gate for the first time
+across all versions; v5 trained against a corrupted corpus and is
+superseded, not evaluated; no trained adapter is deployed
 
 This log records the native speech-to-speech distillation experiments after the
 one-step plumbing smoke test. Private corpora, checkpoints, raw speech, sealed
@@ -256,6 +257,46 @@ base and v6-adapter arms, `score-native-results.py` runs the sealed
 Tolkien-judge scoring, and `report-ab-eval.py` applies the precommitted
 gates. No claim is made here until that report exists.
 
+## v6 evaluation
+
+The sealed native A/B evaluation ran against the trained v6 adapters
+(2026-07-27) using `scripts/run-v6-native-eval.sh`, the first committed
+script tying prepare/collect/score/report together end to end -- prior
+versions' evaluations were run by hand and never captured. Base and adapter
+arms both covered all 12 held-out probes (6 aragorn, 6 sauron); 24
+observations total, no missing measurements.
+
+| Metric | Base | v6 adapter | Paired delta CI95 |
+| --- | ---: | ---: | ---: |
+| Persona fidelity | 0.2250 | 0.3750 | `[0.0083, 0.15, 0.30]` |
+| Lore accuracy | 0.2750 | 0.3917 | `[-0.15, 0.117, 0.375]` |
+| Cross-persona confusion | 0 | 0 | no regression |
+| Interruption p95 | 3,488 ms | 3,843 ms | must be at most 1,000 ms |
+| First-audio latency | 1,077 ms | 1,884 ms | must not regress by more than 10% |
+| Underruns per observation | 2.17 | 1.00 | no regression (adapter improved) |
+
+**Persona fidelity cleared its gate for the first time across v1-v6**: the
+paired 95% confidence interval `[0.0083, 0.30]` excludes zero. Lore accuracy
+improved by the same +67%/+42% relative margins seen in v4's point estimates,
+but with only 12 pairs (6 dialogues per character) the interval still
+crosses zero. The corpus fix directly targeted lore -- under the v5 corpus
+bug, lore was effectively 100% interruption-truncated; v6 brought that down
+to 14-17% -- so the improved point estimate without significance is
+consistent with a real but not yet provably-significant gain at this sample
+size, not a repeat of v1-v4's confounded-validation failure mode.
+
+Interruption p95 remains far over gate on **both** arms (base included),
+and the adapter is directionally worse than base, not better: 3,843ms vs
+3,488ms. First-audio latency also regressed on the adapter by ~75% relative
+(1,077ms to 1,884ms). Both are plausibly LoRA computational overhead
+(merged-projection inference is slower than the unmodified base weights)
+rather than a training-data defect -- worth checking directly (profile
+adapter vs base generation latency in isolation) before the next corpus
+iteration, since no amount of corpus correction fixes an inference-speed
+regression.
+
+Result: v6 remained inactive. No adapter is deployed.
+
 ## Reproducibility entry points
 
 - `scripts/train-mvp-v2.sh`: corrected v2 reference run.
@@ -266,6 +307,10 @@ gates. No claim is made here until that report exists.
   against the corrupted `mvp-v5-early-barge` corpus; superseded, see above.
 - `scripts/train-mvp-v6-persona.sh`: same pipeline against the corpus-generator
   fix (`mvp-v6-decoupled`), writing to fresh `run_dir`s.
+- `scripts/run-v6-native-eval.sh`: end-to-end sealed evaluation -- renders
+  base/adapter runtime configs, starts/stops PersonaPlex directly per arm,
+  collects, scores, and applies the release gates. First committed script
+  for this; v1-v5 evaluations were run by hand.
 - `scripts/prepare-blind-eval.py`: seeded arm sealing and randomized probes.
 - `scripts/collect-native-arm.py`: native full-duplex speech collector.
 - `scripts/score-native-results.py`: sealed Tolkien-judge scoring.
