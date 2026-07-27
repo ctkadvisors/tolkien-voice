@@ -198,7 +198,7 @@ prompt. The old audio is not reused.
 - `scripts/prepare-blind-eval.py`: seeded arm sealing and randomized probes.
 - `scripts/collect-native-arm.py`: native full-duplex speech collector.
 - `scripts/score-native-results.py`: sealed Tolkien-judge scoring.
-- `scripts/report-native-eval.py`: precommitted release gates and confidence
+- `scripts/report-ab-eval.py`: precommitted release gates and confidence
   intervals.
 
 No prompt-only demo, smoke checkpoint, or failed experimental adapter is
