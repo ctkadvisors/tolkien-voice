@@ -14,7 +14,6 @@ from tolkien_voice.training.native_probe import (
     load_user_channel,
     measure_interruption_response,
     pad_pcm_frame,
-    probe_native_interruption,
     probe_native_session,
     summarize_interruption_text,
     summarize_audio_packets,
