@@ -424,3 +424,4 @@ async def test_probe_native_interruption_exposes_output_frames_for_reward_reuse(
     assert "output_frames" in result
     assert len(result["output_frames"]) > 0
     assert all(isinstance(frame, tuple) and len(frame) == 2 for frame in result["output_frames"])
+    assert result["max_wait_seconds"] == 1.0
