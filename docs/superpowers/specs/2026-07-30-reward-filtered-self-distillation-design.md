@@ -268,13 +268,14 @@ work:
 3. `select_best_rollout`; skip scenarios where it returns `None`, logging
    which ones (a scenario contributing nothing is a real, visible signal
    about that scenario's difficulty, not a silent drop).
-4. `build_self_distillation_example` for each kept rollout, split
-   assigned by the existing `evals/persona/probes.yaml` scenario metadata
-   if present, else `Split.TRAIN` (this corpus supplements v6's existing
-   train/validation/held-out sets rather than replacing them; held-out
-   examples are for evaluation only and self-distillation's whole point
-   is training signal, so defaulting new examples to TRAIN is correct
-   unless the scenario is explicitly marked otherwise).
+4. `build_self_distillation_example` for each kept rollout, with
+   `split=Split.TRAIN` always -- confirmed by reading
+   `PersonaProbe`/`load_persona_manifest`
+   (`src/tolkien_voice/evaluation.py`) that `probes.yaml` carries no
+   split metadata to inherit; this corpus supplements v6's existing
+   train/validation/held-out sets rather than replacing them, and
+   held-out examples exist for evaluation only, so every new
+   self-distillation example is training signal by construction.
 5. `write_moshi_manifests` (`manifest.py`, unchanged) over the collected
    `RenderedExample` list -- same manifest format v6's corpus already
    produces, so `train-mvp-v6-persona.sh` consumes it with zero changes.
