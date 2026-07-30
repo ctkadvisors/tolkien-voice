@@ -46,7 +46,7 @@ Add this assertion to the existing test
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd ~/tolkien-voice && uv run pytest tests/test_training_native_probe.py::test_probe_native_interruption_exposes_output_frames_for_reward_reuse -v`
+Run: `uv run pytest tests/test_training_native_probe.py::test_probe_native_interruption_exposes_output_frames_for_reward_reuse -v`
 Expected: FAIL with `KeyError: 'first_output_received_seconds'`
 
 - [ ] **Step 3: Add the field to `probe_native_interruption`'s return dict**
@@ -86,7 +86,7 @@ Add `"first_output_received_seconds"` right after `"output_frames"`:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd ~/tolkien-voice && uv run pytest tests/test_training_native_probe.py::test_probe_native_interruption_exposes_output_frames_for_reward_reuse -v`
+Run: `uv run pytest tests/test_training_native_probe.py::test_probe_native_interruption_exposes_output_frames_for_reward_reuse -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -206,7 +206,7 @@ accept the parameter so the call doesn't raise `TypeError`:
 
 - [ ] **Step 7: Run tests to verify they fail**
 
-Run: `cd ~/tolkien-voice && uv run pytest tests/test_training_rollout.py -v`
+Run: `uv run pytest tests/test_training_rollout.py -v`
 Expected: FAIL -- `Rollout` rejects the new kwargs (`extra="forbid"`) and/or
 `collect_rollout_group` calls the fake without `raw_audio_path`, causing a
 `TypeError`.
@@ -293,12 +293,12 @@ question) as-is -- still accurate background, not part of this fix.
 
 - [ ] **Step 9: Run tests to verify they pass**
 
-Run: `cd ~/tolkien-voice && uv run pytest tests/test_training_rollout.py tests/test_training_native_probe.py -v`
+Run: `uv run pytest tests/test_training_rollout.py tests/test_training_native_probe.py -v`
 Expected: PASS, all tests.
 
 - [ ] **Step 10: Run the full test suite to check for ripple effects**
 
-Run: `cd ~/tolkien-voice && uv run pytest -q`
+Run: `uv run pytest -q`
 Expected: PASS. If any other test constructs a `Rollout` directly (grep
 for `Rollout(` outside the files already touched), update it the same way
 Step 6 updated `_rollout`.
@@ -423,7 +423,7 @@ def test_leading_silence_seconds_is_zero_when_speech_starts_immediately(tmp_path
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd ~/tolkien-voice && uv run pytest tests/test_training_self_distillation.py -v`
+Run: `uv run pytest tests/test_training_self_distillation.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'tolkien_voice.training.self_distillation'`
 
 - [ ] **Step 3: Implement**
@@ -481,7 +481,7 @@ def leading_silence_seconds(wav_path: Path, *, activity_threshold: float = 0.01)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd ~/tolkien-voice && uv run pytest tests/test_training_self_distillation.py -v`
+Run: `uv run pytest tests/test_training_self_distillation.py -v`
 Expected: PASS, all 5 tests.
 
 - [ ] **Step 5: Commit**
@@ -584,7 +584,7 @@ def test_build_self_distillation_example_produces_a_valid_rendered_example(
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd ~/tolkien-voice && uv run pytest tests/test_training_self_distillation.py::test_build_self_distillation_example_produces_a_valid_rendered_example -v`
+Run: `uv run pytest tests/test_training_self_distillation.py::test_build_self_distillation_example_produces_a_valid_rendered_example -v`
 Expected: FAIL with `ImportError` (`build_self_distillation_example` doesn't exist yet).
 
 - [ ] **Step 3: Implement**
@@ -758,7 +758,7 @@ def build_self_distillation_example(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd ~/tolkien-voice && uv run pytest tests/test_training_self_distillation.py -v`
+Run: `uv run pytest tests/test_training_self_distillation.py -v`
 Expected: PASS, all tests.
 
 If `_word_alignments` produces zero alignments (e.g. `rollout.transcript`
@@ -771,7 +771,7 @@ transcripts already scored above 0 by `compute_quality_reward`).
 
 - [ ] **Step 5: Run the full test suite**
 
-Run: `cd ~/tolkien-voice && uv run pytest -q`
+Run: `uv run pytest -q`
 Expected: PASS, no regressions.
 
 - [ ] **Step 6: Commit**
@@ -927,14 +927,14 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Syntax/import check**
 
-Run: `cd ~/tolkien-voice && uv run python -c "import ast; ast.parse(open('scripts/build-self-distillation-corpus.py').read())"`
+Run: `uv run python -c "import ast; ast.parse(open('scripts/build-self-distillation-corpus.py').read())"`
 Expected: no output (valid syntax). Then:
-Run: `cd ~/tolkien-voice && uv run python -m py_compile scripts/build-self-distillation-corpus.py`
+Run: `uv run python -m py_compile scripts/build-self-distillation-corpus.py`
 Expected: no output (imports resolve, no syntax errors).
 
 - [ ] **Step 3: Run the full test suite one more time**
 
-Run: `cd ~/tolkien-voice && uv run pytest -q`
+Run: `uv run pytest -q`
 Expected: PASS, no regressions from any task in this plan.
 
 - [ ] **Step 4: Commit**
