@@ -569,7 +569,387 @@ git commit -m "fix: recalibrate self-distillation timing guard for sub-realtime 
 
 ---
 
-## After this task: live re-verification (not automated, requires Spark)
+---
+
+### Task 2: Fix interruption placement to use the ground-truth measured delay
+
+**Context:** Task 1's own final whole-branch review found it incomplete --
+it correctly rescales alignment timestamps but leaves
+`interruption_start_sec` computed from raw `rollout.barge_in_seconds`,
+while the assistant's audio next to it now plays back compressed relative
+to wall-clock time (that's the point of Task 1). At the live-observed
+~1.4-1.5x ratio this can place the interruption *after* the assistant's
+placed audio has already gone quiet -- the reconstructed clip would show
+the assistant yielding before the interruption it's responding to is even
+audible. See the design spec's "Correction" section for the full
+derivation of the fix below.
+
+**Files:**
+- Modify: `src/tolkien_voice/training/self_distillation.py`
+- Test: `tests/test_training_self_distillation.py`
+
+**Interfaces:**
+- Consumes: `Rollout.delay_seconds` (already exists, unchanged) as the
+  ground-truth measured wall-clock gap between interruption and yield.
+- Produces: `build_self_distillation_example`'s public signature and return
+  type are unchanged -- no caller needs updating.
+
+- [ ] **Step 1: Write the failing test for the corrected placement**
+
+Add this test to `tests/test_training_self_distillation.py` (place it
+after `test_build_self_distillation_example_tolerates_sub_realtime_generation`,
+since it reuses the same compression ratio):
+
+```python
+def test_build_self_distillation_example_places_interruption_relative_to_real_yield(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The interruption's audible onset in the reconstructed WAV must land
+    delay_seconds before the assistant's real (rescaled) speech end -- not
+    at a raw barge_in_seconds, which can place the interruption after the
+    assistant's compressed audio has already gone quiet under sub-realtime
+    generation, teaching the model to yield before an interruption it
+    hasn't heard yet. See the design spec's "Correction" section.
+    """
+    _install_fake_audio_modules(monkeypatch)
+
+    opening_wav = tmp_path / "opening.wav"
+    interruption_wav = tmp_path / "interruption.wav"
+    # Short opening (0.1s) so it can never overlap the interruption, which
+    # this scenario places around t=5.5s.
+    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=0.1)
+    # Silence prefix is an exact multiple of FRAME_SECONDS (0.04s * 2 =
+    # 0.08s) so leading_silence_seconds returns exactly 0.08, avoiding
+    # frame-quantization ambiguity in this test's expected value.
+    _write_mono_wav(interruption_wav, silence_seconds=0.08, speech_seconds=0.6)
+
+    raw_audio_path = tmp_path / "rollout-0.opus"
+    # Same 5/7 compression ratio as
+    # test_build_self_distillation_example_tolerates_sub_realtime_generation
+    # (decoded 10.0s over a 14.0s wall-clock span).
+    _write_opus_fixture(raw_audio_path, seconds=10.0, amplitude=0.1)
+
+    rollout = Rollout(
+        transcript="Go on, then.",
+        yield_delay_reward=-1.0,
+        quality_reward=0.8,
+        delay_seconds=1.0,
+        raw_audio_path=raw_audio_path,
+        barge_in_seconds=6.0,
+        first_output_received_seconds=0.5,
+        last_output_received_seconds=14.5,
+        post_barge_text_frames=[(9.5, "Go on, then.")],
+        # Last active frame at raw t=9.0 -- rescales to
+        # 0.5 + (9.0 - 0.5) * (10.0 / 14.0) = 46/7 (~6.571s).
+        output_frames=[(0.5, 0.1), (5.0, 0.1), (9.0, 0.1)],
+    )
+    output_directory = tmp_path / "corpus"
+
+    example = build_self_distillation_example(
+        rollout,
+        scenario_id="aragorn-lore-rangers",
+        character="aragorn",
+        opening_wav_path=opening_wav,
+        interruption_wav_path=interruption_wav,
+        system_prompt="<system>You are Aragorn.<system>",
+        split=Split.TRAIN,
+        output_directory=output_directory,
+    )
+
+    # real_speech_end_sec (rescaled) = 46/7. The interruption's own silence
+    # prefix (onset_offset) exactly cancels out of the audible-onset
+    # position: interruption_start_sec = (46/7 - delay_seconds) -
+    # onset_offset, and the loud content starts onset_offset into the
+    # clip, so audible onset = 46/7 - delay_seconds regardless of
+    # onset_offset's value.
+    expected_audible_onset_sec = 46 / 7 - 1.0  # ~5.571428571
+    assistant_end_sec = 0.5 + 10.0  # assistant_start_sec + decoded_duration
+
+    with wave.open(str(example.wav_path), "rb") as source:
+        sample_rate = source.getframerate()
+        interleaved = array("h")
+        interleaved.frombytes(source.readframes(source.getnframes()))
+    right_channel = interleaved[1::2]  # user/interruption channel
+
+    def _right_channel_rms(start_sec: float, duration_sec: float) -> float:
+        start = round(start_sec * sample_rate)
+        end = round((start_sec + duration_sec) * sample_rate)
+        window = right_channel[max(0, start) : max(0, end)]
+        if not window:
+            return 0.0
+        return (sum(sample * sample for sample in window) / len(window)) ** 0.5
+
+    # Silent just before the expected onset -- the interruption has not
+    # started yet, and the short opening ended long ago.
+    assert _right_channel_rms(expected_audible_onset_sec - 0.5, 0.3) < 100
+    # Audible at and after the expected onset.
+    assert _right_channel_rms(expected_audible_onset_sec + 0.05, 0.3) > 1000
+    # The interruption's onset lands comfortably before the assistant's
+    # placed audio ends -- the concrete failure mode this correction fixes
+    # (the pre-correction code could place it after this point).
+    assert expected_audible_onset_sec < assistant_end_sec
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `uv run pytest tests/test_training_self_distillation.py::test_build_self_distillation_example_places_interruption_relative_to_real_yield -v`
+Expected: FAIL -- with the current (Task 1) code, the interruption is
+placed at raw `barge_in_seconds=6.0` (minus `onset_offset`), not at
+`expected_audible_onset_sec ≈ 5.571`, so the RMS assertions won't line up
+with where the interruption actually landed.
+
+- [ ] **Step 3: Replace `build_self_distillation_example` with the corrected version**
+
+In `src/tolkien_voice/training/self_distillation.py`, replace the entire
+`build_self_distillation_example` function (from its `def` line through
+its final `return RenderedExample(...)`) with:
+
+```python
+def build_self_distillation_example(
+    rollout: Rollout,
+    *,
+    scenario_id: str,
+    character: str,
+    opening_wav_path: Path,
+    interruption_wav_path: Path,
+    system_prompt: str,
+    split: Split,
+    output_directory: Path,
+) -> RenderedExample:
+    """Reconstructs the real recorded session timeline: opening_wav_path
+    at t=0 on the user (right) channel; rollout.raw_audio_path decoded from
+    Opus and positioned starting at rollout.first_output_received_seconds
+    on the assistant (left) channel, playing continuously at its own
+    decoded length (PersonaPlex can generate slower than real-time, so this
+    is shorter than the wall-clock time the audio took to arrive -- see
+    _rescale_to_placed_span); interruption_wav_path positioned on the user
+    channel so its audible onset lands rollout.delay_seconds before the
+    assistant's real (rescaled) speech end -- using the ground-truth
+    measured delay rather than a raw or rescaled barge_in_seconds, so the
+    reconstructed gap between interruption and yield matches what was
+    actually measured, without needing to resample the user channel's own
+    content to stay coherent with the assistant's compressed timeline.
+    """
+    del character  # not needed for construction; kept for caller symmetry with scenario metadata
+    output_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+    opening_samples = _mono_pcm16(opening_wav_path)
+    interruption_samples = _mono_pcm16(interruption_wav_path)
+    assistant_samples = _decode_opus_pcm(rollout.raw_audio_path)
+    decoded_duration = len(assistant_samples) / SAMPLE_RATE
+    if decoded_duration <= 0:
+        raise ValueError(f"assistant audio decoded to no samples for {scenario_id}")
+
+    first_output = rollout.first_output_received_seconds
+    last_output = rollout.last_output_received_seconds
+    wall_clock_span: float | None = None
+    if first_output is not None and last_output is not None:
+        wall_clock_span = last_output - first_output
+        if wall_clock_span < 0:
+            raise ValueError(
+                f"assistant audio timestamps are out of order for {scenario_id}: "
+                f"last_output_received_seconds ({last_output}) precedes "
+                f"first_output_received_seconds ({first_output})"
+            )
+
+    assistant_start_sec = first_output or 0.0
+    assistant_end_sec = assistant_start_sec + decoded_duration
+
+    def _rescale(wall_clock_seconds: float) -> float:
+        if wall_clock_span is None or first_output is None:
+            return wall_clock_seconds
+        return _rescale_to_placed_span(
+            wall_clock_seconds,
+            first_output_received_seconds=first_output,
+            wall_clock_span=wall_clock_span,
+            assistant_start_sec=assistant_start_sec,
+            decoded_duration=decoded_duration,
+        )
+
+    # The real end of audible assistant speech, rescaled onto the placed
+    # (possibly compressed) audio span -- assistant_end_sec is the end of
+    # the entire captured assistant audio, which includes a trailing
+    # response_seconds window (default 12.0s) of mostly silence after the
+    # assistant actually stops talking, so it is not this value. Falling
+    # back to assistant_end_sec when no output frame is ever active is a
+    # safe degenerate default (matches the pre-rescale behavior) rather
+    # than crashing on audio that apparently never had any real output.
+    # Computed here (before interruption placement below) because the
+    # interruption's own placement now derives from this value.
+    real_speech_end_sec = _last_active_frame_seconds(rollout.output_frames)
+    real_speech_end_sec = (
+        _rescale(real_speech_end_sec) if real_speech_end_sec is not None else assistant_end_sec
+    )
+
+    onset_offset = leading_silence_seconds(interruption_wav_path)
+    if rollout.delay_seconds is not None:
+        # Place the interruption's audible onset delay_seconds before the
+        # assistant's real (rescaled) speech end -- delay_seconds is the
+        # ground-truth wall-clock gap measure_interruption_response already
+        # computed between the interruption becoming audible and the
+        # assistant going quiet, independent of how this function
+        # reconstructs audio. This guarantees the reconstructed gap matches
+        # what was actually measured, rather than deriving the
+        # interruption's position from a rescale of raw barge_in_seconds,
+        # which would need the user channel's own audio content resampled
+        # to stay coherent with the assistant's compressed timeline -- an
+        # unwanted expansion of scope this correction avoids entirely.
+        interruption_start_sec = max(
+            0.0, (real_speech_end_sec - rollout.delay_seconds) - onset_offset
+        )
+    else:
+        # delay_seconds is None only for a rollout that never yielded --
+        # select_best_rollout's reward gate excludes those in practice, but
+        # the field is typed float | None, so degrade to the original raw
+        # placement rather than computing a nonsensical delay-based offset.
+        interruption_start_sec = max(0.0, rollout.barge_in_seconds - onset_offset)
+
+    opening_end_sec = len(opening_samples) / SAMPLE_RATE
+    interruption_end_sec = interruption_start_sec + len(interruption_samples) / SAMPLE_RATE
+    total_seconds = max(opening_end_sec, interruption_end_sec, assistant_end_sec)
+    total_frames = math.ceil(total_seconds * SAMPLE_RATE)
+
+    left = array("i", [0] * total_frames)   # assistant
+    right = array("i", [0] * total_frames)  # user
+
+    def _mix(channel: array, samples: array, start_sec: float) -> None:
+        start_frame = round(start_sec * SAMPLE_RATE)
+        for offset, sample in enumerate(samples):
+            target = start_frame + offset
+            if target >= len(channel):
+                break
+            mixed = channel[target] + sample
+            if abs(mixed) >= MAX_SAFE_SAMPLE:
+                raise ValueError(f"mixed audio is clipped in {scenario_id}")
+            channel[target] = mixed
+
+    _mix(right, opening_samples, 0.0)
+    _mix(right, interruption_samples, interruption_start_sec)
+    _mix(left, assistant_samples, assistant_start_sec)
+
+    interleaved = array("h")
+    for left_sample, right_sample in zip(left, right, strict=True):
+        interleaved.extend((left_sample, right_sample))
+
+    example_id = f"{scenario_id}-self-distill"
+    wav_path = output_directory / f"{example_id}.wav"
+    temporary_wav = wav_path.with_suffix(".wav.tmp")
+    with wave.open(str(temporary_wav), "wb") as output:
+        output.setnchannels(2)
+        output.setsampwidth(2)
+        output.setframerate(SAMPLE_RATE)
+        output.writeframes(interleaved.tobytes())
+    os.replace(temporary_wav, wav_path)
+    wav_path.chmod(0o600)
+
+    rescaled_frames = [
+        (_rescale(chunk_start), text) for chunk_start, text in rollout.post_barge_text_frames
+    ]
+    alignments = _word_alignments_from_frames(
+        rescaled_frames, real_speech_end_sec=real_speech_end_sec
+    )
+    alignment_path = output_directory / f"{example_id}.json"
+    temporary_alignment = alignment_path.with_suffix(".json.tmp")
+    temporary_alignment.write_text(
+        json.dumps(
+            {
+                "alignments": alignments,
+                "system_prompt": system_prompt,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    temporary_alignment.chmod(0o600)
+    os.replace(temporary_alignment, alignment_path)
+
+    blueprint_hash = hashlib.sha256(
+        f"{scenario_id}:{rollout.transcript}".encode("utf-8")
+    ).hexdigest()
+
+    return RenderedExample(
+        id=example_id,
+        blueprint_hash=blueprint_hash,
+        wav_path=wav_path,
+        alignment_path=alignment_path,
+        duration_sec=total_frames / SAMPLE_RATE,
+        split=split,
+        voice_license=VOICE_LICENSE,
+    )
+```
+
+This changes only: (a) where `assistant_end_sec` and the `_rescale`
+closure are defined (moved earlier, right after `assistant_start_sec`, so
+`real_speech_end_sec` can be computed before interruption placement
+needs it); (b) `real_speech_end_sec`'s computation is moved earlier, to
+before `interruption_start_sec`, and is reused later for alignments rather
+than recomputed; (c) `interruption_start_sec`'s formula. The alignment
+JSON-building logic itself (`_word_alignments_from_frames` call and its
+inputs) is otherwise byte-for-byte the same computation as before, just
+reusing the already-computed `real_speech_end_sec` instead of recomputing
+it a second time.
+
+- [ ] **Step 4: Run the new test to verify it passes**
+
+Run: `uv run pytest tests/test_training_self_distillation.py::test_build_self_distillation_example_places_interruption_relative_to_real_yield -v`
+Expected: PASS.
+
+- [ ] **Step 5: Run the full test file and check for regressions**
+
+Run: `uv run pytest tests/test_training_self_distillation.py -v`
+Expected: PASS for every test except possibly
+`test_build_self_distillation_example_raises_on_channel_clip`.
+
+That one test deliberately engineers audible overlap between the opening
+and interruption clips to trigger the clip-raise guard, using
+`barge_in_seconds=0.3` to position the interruption -- but
+`interruption_start_sec` no longer derives from `barge_in_seconds` when
+`delay_seconds` is set (which this test's fixture does,
+`delay_seconds=0.3`), so its placement is now driven by
+`real_speech_end_sec - delay_seconds` instead. Hand-derivation for this
+plan (using the test's existing fixture:
+`first_output_received_seconds=0.1`, `last_output_received_seconds=1.1`,
+decoded audio 1.0s -- `wall_clock_span == decoded_duration`, so `_rescale`
+is an identity mapping here, no compression) suggests the new placement
+(`(1.1 - 0.3) - 0.2 = 0.6`, vs. the old `0.3 - 0.2 = 0.1`) still overlaps
+the opening's loud region (`[0, 1.0]` at amplitude 20000) with the
+interruption's loud region (`[0.8, 1.4]` at amplitude 15000) over
+`[0.8, 1.0]` -- still comfortably exceeding `MAX_SAFE_SAMPLE`, so this test
+likely still passes unmodified. **Verify this by actually running it
+rather than trusting the hand-derivation above.**
+
+If it does fail: the fixture's overlap margin needs restoring under the
+new delay-driven formula. Recompute using the same technique as Step 1's
+new test (derive `real_speech_end_sec`, subtract `delay_seconds`, subtract
+`onset_offset` for the clip-start, or reason about where the *loud* content
+lands by adding `onset_offset` back for the audible-onset position) and
+adjust `delay_seconds` and/or the `output_frames`/`first_output_received_seconds`/
+`last_output_received_seconds` fixture values until the interruption's
+loud region again overlaps the opening's `[0, 1.0]` loud region by a
+comfortable margin (at least 0.2s, matching this plan's own new test's
+margin philosophy) -- verify by re-running the test, not by hand-derivation
+alone, since `leading_silence_seconds`'s frame-quantization can shift
+`onset_offset` by up to one `FRAME_SECONDS` (0.04s) from a naive
+calculation.
+
+- [ ] **Step 6: Run the full suite and lint**
+
+Run: `uv run pytest -q`
+Expected: PASS, no regressions in any other file.
+
+Run: `uv run ruff check --exclude vendor .`
+Expected: `All checks passed!`
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/tolkien_voice/training/self_distillation.py tests/test_training_self_distillation.py
+git commit -m "fix: place interruption using the ground-truth measured delay, not raw barge-in timing"
+```
+
+---
+
+## After these tasks: live re-verification (not automated, requires Spark)
 
 Once merged, re-run the same small-scale live check that originally
 surfaced this bug:
