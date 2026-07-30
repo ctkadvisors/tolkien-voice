@@ -230,6 +230,60 @@ them about `assistant_start_sec`/`decoded_duration`.
   decoded_duration`, interpolates linearly in between, and returns
   `assistant_start_sec` (not a division error) when `wall_clock_span <= 0`.
 
+## Correction (found during this fix's own final whole-branch review)
+
+The first implementation of this design (commit `1ca005d`, reviewed but not
+merged) rescaled alignment timestamps onto the placed-audio span but left
+`interruption_start_sec` computed from raw, unrescaled `rollout.barge_in_seconds`.
+Because the assistant's audio now plays back *compressed* relative to
+wall-clock time (that's the whole point of this fix -- `decoded_duration`
+is shorter than `wall_clock_span`), positioning the interruption at its raw
+wall-clock timestamp while the assistant's response plays out on a shorter,
+compressed timeline can place the interruption *after* the assistant's
+audio has already gone quiet in the reconstructed WAV -- teaching the
+model to yield before the interruption it's supposedly responding to is
+even audible. At the live-observed ~1.4-1.5x ratio this was measured at
+1.5-2.5 seconds of apparent-yield-precedes-interruption distortion.
+
+**Fix:** don't derive the interruption's placement from a rescale of
+`barge_in_seconds` at all -- that would need the user channel's own
+content resampled to stay fully coherent with a compressed timeline (a
+real, unwanted expansion of scope: resampling live-recorded audio content
+just to reposition an event marker). Instead, derive it from data already
+computed for exactly this purpose: `Rollout.delay_seconds` (from
+`measure_interruption_response`) is the *ground-truth* measured gap, in
+real wall-clock seconds, between the interruption becoming audible and the
+assistant going quiet -- entirely independent of how this corpus builder
+later reconstructs audio. Placing the interruption at
+`rescaled_real_speech_end_sec - delay_seconds` (rather than at a
+rescaled/unrescaled `barge_in_seconds`) guarantees the reconstructed gap
+between interruption and yield matches the real measured delay by
+construction, using only repositioning (not resampling) of the
+interruption clip.
+
+`real_speech_end_sec` here is the same rescaled value already computed for
+alignment bounding (`_last_active_frame_seconds`, rescaled via
+`_rescale_to_placed_span`) -- this fix reuses it rather than computing a
+second, separate "where does the assistant go quiet" value.
+
+If `rollout.delay_seconds` is `None` (should not occur for any rollout
+`select_best_rollout` would actually select, since the reward gate on
+`yield_delay_reward` excludes never-yielded rollouts, but the field is
+typed `float | None`), fall back to the original raw-`barge_in_seconds`
+placement -- the same "degrade to the old, simpler behavior when the
+better data isn't available" pattern already used for
+`real_speech_end_sec is None -> assistant_end_sec`.
+
+This still risks the interruption's derived placement overlapping the
+opening clip's own tail on the user channel (if
+`rescaled_real_speech_end_sec - delay_seconds` lands before
+`opening_end_sec`) -- this is not a new risk introduced by this
+correction; the original, unfixed code had the identical risk using raw
+`barge_in_seconds`. `_mix`'s existing clip-raise already catches audible
+overlap loudly rather than silently corrupting, which is the correct
+behavior for a genuinely inconsistent rollout, not something this
+correction needs to additionally guard against.
+
 ## Reproducibility entry point
 
 - Same as the original design's live-verification section: run
