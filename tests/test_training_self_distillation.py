@@ -90,3 +90,74 @@ def test_leading_silence_seconds_is_zero_when_speech_starts_immediately(tmp_path
     _write_mono_wav(wav_path, silence_seconds=0.0, speech_seconds=0.5)
 
     assert leading_silence_seconds(wav_path) == 0.0
+
+
+import json
+
+import sphn
+
+from tolkien_voice.training.manifest import validate_rendered_examples
+from tolkien_voice.training.schema import Split
+from tolkien_voice.training.self_distillation import build_self_distillation_example
+
+
+def _write_opus_fixture(path: Path, *, seconds: float, amplitude: float) -> None:
+    import numpy as np
+
+    sample_rate = 24_000
+    frame_samples = round(sample_rate * 0.04)
+    writer = sphn.OpusStreamWriter(sample_rate)
+    total_samples = round(seconds * sample_rate)
+    audio_bytes = bytearray()
+    for offset in range(0, total_samples, frame_samples):
+        length = min(frame_samples, total_samples - offset)
+        frame = np.full(frame_samples, amplitude, dtype=np.float32)
+        frame[length:] = 0.0
+        writer.append_pcm(frame)
+        payload = writer.read_bytes()
+        if payload:
+            audio_bytes.extend(payload)
+    path.write_bytes(bytes(audio_bytes))
+
+
+def test_build_self_distillation_example_produces_a_valid_rendered_example(
+    tmp_path: Path,
+) -> None:
+    opening_wav = tmp_path / "opening.wav"
+    interruption_wav = tmp_path / "interruption.wav"
+    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=1.0)
+    _write_mono_wav(interruption_wav, silence_seconds=0.2, speech_seconds=0.6)
+
+    raw_audio_path = tmp_path / "rollout-0.opus"
+    _write_opus_fixture(raw_audio_path, seconds=1.0, amplitude=0.2)
+
+    rollout = Rollout(
+        transcript="Go on, then.",
+        yield_delay_reward=-0.3,
+        quality_reward=0.8,
+        delay_seconds=0.3,
+        raw_audio_path=raw_audio_path,
+        barge_in_seconds=1.0,
+        first_output_received_seconds=0.1,
+    )
+    output_directory = tmp_path / "corpus"
+
+    example = build_self_distillation_example(
+        rollout,
+        scenario_id="aragorn-lore-rangers",
+        character="aragorn",
+        opening_wav_path=opening_wav,
+        interruption_wav_path=interruption_wav,
+        system_prompt="<system>You are Aragorn.<system>",
+        split=Split.TRAIN,
+        output_directory=output_directory,
+    )
+
+    validate_rendered_examples([example])
+    assert example.split == Split.TRAIN
+    assert example.voice_license == "self-distillation-v6-continuation"
+    assert example.wav_path.is_file()
+    assert example.alignment_path.is_file()
+    payload = json.loads(example.alignment_path.read_text())
+    assert payload["system_prompt"] == "<system>You are Aragorn.<system>"
+    assert len(payload["alignments"]) >= 1
