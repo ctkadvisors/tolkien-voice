@@ -16,6 +16,7 @@ def _rollout(
     raw_audio_path: Path = Path("/tmp/rollout.opus"),
     barge_in_seconds: float = 1.1,
     first_output_received_seconds: float | None = 0.2,
+    last_output_received_seconds: float | None = 0.2,
 ) -> Rollout:
     return Rollout(
         transcript="text",
@@ -25,6 +26,7 @@ def _rollout(
         raw_audio_path=raw_audio_path,
         barge_in_seconds=barge_in_seconds,
         first_output_received_seconds=first_output_received_seconds,
+        last_output_received_seconds=last_output_received_seconds,
     )
 
 
@@ -101,6 +103,7 @@ async def test_collect_rollout_group_scores_post_barge_text_only(
             "barge_in_ms": 100,
             "max_wait_seconds": max_wait_seconds,
             "first_output_received_seconds": 0.0,
+            "last_output_received_seconds": 0.16,
             "interruption_response_ms": 40,
             "interruption_text": f"pre-barge speech. post-barge reply {index}",
             "post_barge_text": f"post-barge reply {index}",
@@ -155,6 +158,7 @@ async def test_collect_rollout_group_scores_post_barge_text_only(
     assert group.rollouts[0].raw_audio_path == raw_audio_paths[0]
     assert group.rollouts[0].barge_in_seconds == 0.1
     assert group.rollouts[0].first_output_received_seconds == 0.0
+    assert group.rollouts[0].last_output_received_seconds == 0.16
 
 
 @pytest.mark.asyncio
@@ -180,6 +184,7 @@ async def test_collect_rollout_group_propagates_mid_group_failure(
             "barge_in_ms": 100,
             "max_wait_seconds": max_wait_seconds,
             "first_output_received_seconds": 0.0,
+            "last_output_received_seconds": 0.16,
             "interruption_response_ms": 40,
             "interruption_text": "pre-barge speech. post-barge reply",
             "post_barge_text": "post-barge reply",

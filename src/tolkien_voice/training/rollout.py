@@ -20,6 +20,7 @@ class Rollout(BaseModel):
     raw_audio_path: Path
     barge_in_seconds: float
     first_output_received_seconds: float | None
+    last_output_received_seconds: float | None
 
 
 class RolloutGroup(BaseModel):
@@ -134,6 +135,7 @@ async def collect_rollout_group(
                 raw_audio_path=raw_audio_path,
                 barge_in_seconds=result["barge_in_ms"] / 1000,
                 first_output_received_seconds=result["first_output_received_seconds"],
+                last_output_received_seconds=result["last_output_received_seconds"],
             )
         )
     return RolloutGroup(probe_id=probe_id, character=character, rollouts=rollouts)

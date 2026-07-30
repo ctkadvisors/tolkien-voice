@@ -138,6 +138,36 @@ def build_self_distillation_example(
     interruption_samples = _mono_pcm16(interruption_wav_path)
     assistant_samples = _decode_opus_pcm(rollout.raw_audio_path)
 
+    if (
+        rollout.first_output_received_seconds is not None
+        and rollout.last_output_received_seconds is not None
+    ):
+        # first_output_received_seconds and last_output_received_seconds are
+        # both wall-clock receive timestamps from probe_native_interruption,
+        # but they are captured at very different points in that function's
+        # sender loop (which sleeps FRAME_SECONDS after every send, so
+        # wall-clock time drifts ahead of nominal stream time as the session
+        # runs). If PersonaPlex's server-side model free-runs on its own
+        # clock rather than staying in lockstep with received frames, that
+        # drift is harmless; if it runs in lockstep, the drift is real and
+        # would misplace assistant audio relative to the interruption on the
+        # reconstructed timeline -- corrupting exactly the yield-timing
+        # signal this corpus exists to teach. Nobody can currently verify
+        # which case holds (PersonaPlex's server source isn't available), so
+        # rather than guess-correct the timing, cross-check the wall-clock
+        # span against the independently-measured decoded-audio duration and
+        # fail loudly here, before any partial artifact is written, rather
+        # than silently emitting a corpus example with corrupted timing.
+        wall_clock_span = rollout.last_output_received_seconds - rollout.first_output_received_seconds
+        decoded_duration = len(assistant_samples) / SAMPLE_RATE
+        drift = abs(wall_clock_span - decoded_duration)
+        if drift > 0.15:
+            raise ValueError(
+                f"assistant audio timing is inconsistent for {scenario_id}: "
+                f"wall-clock span {wall_clock_span:.3f}s vs decoded duration "
+                f"{decoded_duration:.3f}s (drift {drift:.3f}s)"
+            )
+
     onset_offset = leading_silence_seconds(interruption_wav_path)
     interruption_start_sec = max(0.0, rollout.barge_in_seconds - onset_offset)
     assistant_start_sec = rollout.first_output_received_seconds or 0.0
