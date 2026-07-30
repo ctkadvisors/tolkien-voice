@@ -384,6 +384,7 @@ async def probe_native_interruption(
         "barge_in_ms": round(barge_in_seconds * 1000),
         "output_activity_frames": len(output_frames),
         "output_frames": output_frames,
+        "first_output_received_seconds": audio_times[0] if audio_times else None,
         "max_wait_seconds": max_wait_seconds,
         "interruption_audio_bytes": len(audio_bytes),
         "interruption_underrun_count": packet_summary["underrun_count"],
