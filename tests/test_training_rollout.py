@@ -9,12 +9,22 @@ from tolkien_voice.training.judge import JudgeClient
 from tolkien_voice.training.rollout import Rollout, RolloutGroup, collect_rollout_group
 
 
-def _rollout(*, yield_delay_reward: float, quality_reward: float) -> Rollout:
+def _rollout(
+    *,
+    yield_delay_reward: float,
+    quality_reward: float,
+    raw_audio_path: Path = Path("/tmp/rollout.opus"),
+    barge_in_seconds: float = 1.1,
+    first_output_received_seconds: float | None = 0.2,
+) -> Rollout:
     return Rollout(
         transcript="text",
         yield_delay_reward=yield_delay_reward,
         quality_reward=quality_reward,
         delay_seconds=0.5,
+        raw_audio_path=raw_audio_path,
+        barge_in_seconds=barge_in_seconds,
+        first_output_received_seconds=first_output_received_seconds,
     )
 
 
@@ -72,6 +82,7 @@ async def test_collect_rollout_group_scores_post_barge_text_only(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls: list[float] = []
+    raw_audio_paths: list[Path] = []
 
     async def fake_probe_native_interruption(
         url: str,
@@ -80,13 +91,16 @@ async def test_collect_rollout_group_scores_post_barge_text_only(
         *,
         max_wait_seconds: float,
         response_seconds: float,
+        raw_audio_path: Path,
     ) -> dict:
-        calls.append(max_wait_seconds)
+        calls.append(response_seconds)
+        raw_audio_paths.append(raw_audio_path)
         index = len(calls)
         return {
             "output_frames": [(0.0, 0.08), (0.04, 0.01), (0.08, 0.01), (0.12, 0.01), (0.16, 0.01)],
             "barge_in_ms": 100,
             "max_wait_seconds": max_wait_seconds,
+            "first_output_received_seconds": 0.0,
             "interruption_response_ms": 40,
             "interruption_text": f"pre-barge speech. post-barge reply {index}",
             "post_barge_text": f"post-barge reply {index}",
@@ -124,6 +138,7 @@ async def test_collect_rollout_group_scores_post_barge_text_only(
         probe_prompt="What did your years leading the Rangers of the North teach you?",
         expected_traits=["grounded", "resolute", "first-person"],
         judge=judge,
+        raw_audio_directory=tmp_path,
         group_size=3,
         seed=44,
     )
@@ -136,6 +151,10 @@ async def test_collect_rollout_group_scores_post_barge_text_only(
     assert all("pre-barge speech" not in message for message in scored_user_messages)
     assert group.rollouts[0].transcript == "post-barge reply 1"
     assert group.rollouts[0].delay_seconds == 0.04
+    assert len(set(raw_audio_paths)) == 3
+    assert group.rollouts[0].raw_audio_path == raw_audio_paths[0]
+    assert group.rollouts[0].barge_in_seconds == 0.1
+    assert group.rollouts[0].first_output_received_seconds == 0.0
 
 
 @pytest.mark.asyncio
@@ -151,6 +170,7 @@ async def test_collect_rollout_group_propagates_mid_group_failure(
         *,
         max_wait_seconds: float,
         response_seconds: float,
+        raw_audio_path: Path,
     ) -> dict:
         calls.append(max_wait_seconds)
         if len(calls) == 2:
@@ -159,6 +179,7 @@ async def test_collect_rollout_group_propagates_mid_group_failure(
             "output_frames": [(0.0, 0.08), (0.04, 0.01), (0.08, 0.01), (0.12, 0.01), (0.16, 0.01)],
             "barge_in_ms": 100,
             "max_wait_seconds": max_wait_seconds,
+            "first_output_received_seconds": 0.0,
             "interruption_response_ms": 40,
             "interruption_text": "pre-barge speech. post-barge reply",
             "post_barge_text": "post-barge reply",
@@ -193,6 +214,7 @@ async def test_collect_rollout_group_propagates_mid_group_failure(
             probe_prompt="What did your years leading the Rangers of the North teach you?",
             expected_traits=["grounded", "resolute", "first-person"],
             judge=judge,
+            raw_audio_directory=tmp_path,
             group_size=3,
             seed=44,
         )
@@ -212,6 +234,7 @@ async def test_collect_rollout_group_rejects_group_size_below_one() -> None:
             probe_prompt="p",
             expected_traits=[],
             judge=JudgeClient(base_url="http://teacher.test/v1"),
+            raw_audio_directory=Path("/tmp"),
             group_size=0,
             seed=1,
         )

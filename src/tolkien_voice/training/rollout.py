@@ -17,6 +17,9 @@ class Rollout(BaseModel):
     yield_delay_reward: float
     quality_reward: float
     delay_seconds: float | None
+    raw_audio_path: Path
+    barge_in_seconds: float
+    first_output_received_seconds: float | None
 
 
 class RolloutGroup(BaseModel):
@@ -54,6 +57,7 @@ async def collect_rollout_group(
     probe_prompt: str,
     expected_traits: list[str],
     judge: JudgeClient,
+    raw_audio_directory: Path,
     group_size: int,
     response_seconds: float = 12.0,
     max_wait_seconds: float = 12.0,
@@ -96,25 +100,19 @@ async def collect_rollout_group(
 
     rollouts: list[Rollout] = []
     for index in range(group_size):
+        raw_audio_path = raw_audio_directory / f"{probe_id}-{index}.opus"
         result = await probe_native_interruption(
             url,
             opening_wav_path,
             interruption_wav_path,
             max_wait_seconds=max_wait_seconds,
             response_seconds=response_seconds,
+            raw_audio_path=raw_audio_path,
         )
-        # Known-tracked issue, not fixed here: max_wait_seconds bounds the
-        # pre-barge wait-for-speech window, not the post-barge window in
-        # which a yield can actually be observed (that's response_seconds).
-        # This clamp is only correct because collect_rollout_group's
-        # defaults for the two parameters happen to be equal (12.0); a
-        # caller passing a different response_seconds would get the wrong
-        # never-yielded clamp value. Must be resolved before sub-project 3
-        # trusts these rewards -- see the design spec's Data flow section.
         yield_reward = compute_yield_delay_reward(
             result["output_frames"],
             barge_in_seconds=result["barge_in_ms"] / 1000,
-            observation_window_seconds=result["max_wait_seconds"],
+            observation_window_seconds=response_seconds,
             silence_threshold=0.015,
             sustained_frames=12,
         )
@@ -133,6 +131,9 @@ async def collect_rollout_group(
                 yield_delay_reward=yield_reward,
                 quality_reward=quality_reward,
                 delay_seconds=(known_delay_ms / 1000 if known_delay_ms is not None else None),
+                raw_audio_path=raw_audio_path,
+                barge_in_seconds=result["barge_in_ms"] / 1000,
+                first_output_received_seconds=result["first_output_received_seconds"],
             )
         )
     return RolloutGroup(probe_id=probe_id, character=character, rollouts=rollouts)
