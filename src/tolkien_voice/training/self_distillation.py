@@ -136,6 +136,40 @@ def _last_active_frame_seconds(
     return last_active
 
 
+def _rescale_to_placed_span(
+    wall_clock_seconds: float,
+    *,
+    first_output_received_seconds: float,
+    wall_clock_span: float,
+    assistant_start_sec: float,
+    decoded_duration: float,
+) -> float:
+    """Maps a wall-clock timestamp within
+    [first_output_received_seconds, first_output_received_seconds + wall_clock_span]
+    onto the placed audio's actual span
+    [assistant_start_sec, assistant_start_sec + decoded_duration].
+
+    PersonaPlex can generate audio slower than real-time (observed ~1.4x on
+    Spark, 2026-07-30 live diagnostics), so the wall-clock time between the
+    first and last received packet routinely exceeds the audio's own
+    decoded playback duration. The audio itself is placed starting at
+    assistant_start_sec and playing continuously for decoded_duration (see
+    build_self_distillation_example) -- unrelated wall-clock timestamps
+    (word-chunk arrival times, last-active-frame time) need to be
+    reprojected onto that placed span, not used as-is, or they can land
+    after the audio has already ended in the reconstructed WAV.
+
+    wall_clock_span may be 0 (a session with exactly one received packet)
+    -- in that degenerate case there is nothing to interpolate across, so
+    the result is assistant_start_sec unconditionally rather than dividing
+    by zero.
+    """
+    if wall_clock_span <= 0:
+        return assistant_start_sec
+    fraction = (wall_clock_seconds - first_output_received_seconds) / wall_clock_span
+    return assistant_start_sec + fraction * decoded_duration
+
+
 def _word_alignments_from_frames(
     frames: list[tuple[float, str]], *, real_speech_end_sec: float
 ) -> list[list]:
@@ -184,40 +218,25 @@ def build_self_distillation_example(
     opening_samples = _mono_pcm16(opening_wav_path)
     interruption_samples = _mono_pcm16(interruption_wav_path)
     assistant_samples = _decode_opus_pcm(rollout.raw_audio_path)
+    decoded_duration = len(assistant_samples) / SAMPLE_RATE
+    if decoded_duration <= 0:
+        raise ValueError(f"assistant audio decoded to no samples for {scenario_id}")
 
-    if (
-        rollout.first_output_received_seconds is not None
-        and rollout.last_output_received_seconds is not None
-    ):
-        # first_output_received_seconds and last_output_received_seconds are
-        # both wall-clock receive timestamps from probe_native_interruption,
-        # but they are captured at very different points in that function's
-        # sender loop (which sleeps FRAME_SECONDS after every send, so
-        # wall-clock time drifts ahead of nominal stream time as the session
-        # runs). If PersonaPlex's server-side model free-runs on its own
-        # clock rather than staying in lockstep with received frames, that
-        # drift is harmless; if it runs in lockstep, the drift is real and
-        # would misplace assistant audio relative to the interruption on the
-        # reconstructed timeline -- corrupting exactly the yield-timing
-        # signal this corpus exists to teach. Nobody can currently verify
-        # which case holds (PersonaPlex's server source isn't available), so
-        # rather than guess-correct the timing, cross-check the wall-clock
-        # span against the independently-measured decoded-audio duration and
-        # fail loudly here, before any partial artifact is written, rather
-        # than silently emitting a corpus example with corrupted timing.
-        wall_clock_span = rollout.last_output_received_seconds - rollout.first_output_received_seconds
-        decoded_duration = len(assistant_samples) / SAMPLE_RATE
-        drift = abs(wall_clock_span - decoded_duration)
-        if drift > 0.15:
+    first_output = rollout.first_output_received_seconds
+    last_output = rollout.last_output_received_seconds
+    wall_clock_span: float | None = None
+    if first_output is not None and last_output is not None:
+        wall_clock_span = last_output - first_output
+        if wall_clock_span < 0:
             raise ValueError(
-                f"assistant audio timing is inconsistent for {scenario_id}: "
-                f"wall-clock span {wall_clock_span:.3f}s vs decoded duration "
-                f"{decoded_duration:.3f}s (drift {drift:.3f}s)"
+                f"assistant audio timestamps are out of order for {scenario_id}: "
+                f"last_output_received_seconds ({last_output}) precedes "
+                f"first_output_received_seconds ({first_output})"
             )
 
     onset_offset = leading_silence_seconds(interruption_wav_path)
     interruption_start_sec = max(0.0, rollout.barge_in_seconds - onset_offset)
-    assistant_start_sec = rollout.first_output_received_seconds or 0.0
+    assistant_start_sec = first_output or 0.0
 
     opening_end_sec = len(opening_samples) / SAMPLE_RATE
     interruption_end_sec = interruption_start_sec + len(interruption_samples) / SAMPLE_RATE
@@ -258,6 +277,17 @@ def build_self_distillation_example(
     os.replace(temporary_wav, wav_path)
     wav_path.chmod(0o600)
 
+    def _rescale(wall_clock_seconds: float) -> float:
+        if wall_clock_span is None or first_output is None:
+            return wall_clock_seconds
+        return _rescale_to_placed_span(
+            wall_clock_seconds,
+            first_output_received_seconds=first_output,
+            wall_clock_span=wall_clock_span,
+            assistant_start_sec=assistant_start_sec,
+            decoded_duration=decoded_duration,
+        )
+
     # The last post_barge_text_frames chunk must be bounded by the real end
     # of audible assistant speech, not assistant_end_sec -- assistant_end_sec
     # is the end of the entire captured assistant audio, which includes a
@@ -265,12 +295,20 @@ def build_self_distillation_example(
     # after the assistant actually stops talking. Falling back to
     # assistant_end_sec when no frame is ever active is a safe degenerate
     # default (matches the old behavior) rather than crashing on audio that
-    # apparently never had any real output.
+    # apparently never had any real output. Both this value and each
+    # post_barge_text_frames chunk's own timestamp are wall-clock times that
+    # may span more real time than the audio's actual placed span (PersonaPlex
+    # can generate slower than real-time) -- rescale both onto
+    # [assistant_start_sec, assistant_end_sec] before using them as chunk
+    # boundaries, or a chunk could be timestamped after the audio it's
+    # describing has already ended in the reconstructed WAV.
     real_speech_end_sec = _last_active_frame_seconds(rollout.output_frames)
-    if real_speech_end_sec is None:
-        real_speech_end_sec = assistant_end_sec
+    real_speech_end_sec = (
+        _rescale(real_speech_end_sec) if real_speech_end_sec is not None else assistant_end_sec
+    )
+    rescaled_frames = [(_rescale(chunk_start), text) for chunk_start, text in rollout.post_barge_text_frames]
     alignments = _word_alignments_from_frames(
-        rollout.post_barge_text_frames, real_speech_end_sec=real_speech_end_sec
+        rescaled_frames, real_speech_end_sec=real_speech_end_sec
     )
     alignment_path = output_directory / f"{example_id}.json"
     temporary_alignment = alignment_path.with_suffix(".json.tmp")

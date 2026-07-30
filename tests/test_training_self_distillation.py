@@ -16,6 +16,32 @@ from tolkien_voice.training.self_distillation import (
     leading_silence_seconds,
     select_best_rollout,
 )
+from tolkien_voice.training.self_distillation import _rescale_to_placed_span
+
+
+def test_rescale_to_placed_span_maps_endpoints_and_interpolates() -> None:
+    kwargs = dict(
+        first_output_received_seconds=2.0,
+        wall_clock_span=10.0,
+        assistant_start_sec=1.0,
+        decoded_duration=5.0,
+    )
+
+    assert _rescale_to_placed_span(2.0, **kwargs) == pytest.approx(1.0)
+    assert _rescale_to_placed_span(12.0, **kwargs) == pytest.approx(6.0)
+    assert _rescale_to_placed_span(7.0, **kwargs) == pytest.approx(3.5)
+
+
+def test_rescale_to_placed_span_returns_start_when_span_is_zero() -> None:
+    result = _rescale_to_placed_span(
+        5.0,
+        first_output_received_seconds=5.0,
+        wall_clock_span=0.0,
+        assistant_start_sec=2.0,
+        decoded_duration=3.0,
+    )
+
+    assert result == 2.0
 
 
 def _assert_close(
@@ -429,16 +455,15 @@ def test_build_self_distillation_example_raises_on_channel_clip(
     assert "aragorn-lore-rangers" in str(excinfo.value)
 
 
-def test_build_self_distillation_example_raises_on_assistant_timing_drift(
+def test_build_self_distillation_example_tolerates_sub_realtime_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The wall-clock span between first_output_received_seconds and
-    last_output_received_seconds is measured on a different clock basis
-    than the decoded assistant audio duration might suggest (see
-    probe_native_interruption's docstring/comments on wall-clock drift).
-    build_self_distillation_example must refuse to silently place the
-    assistant audio on a reconstructed timeline when those two
-    measurements disagree by more than the tolerated jitter budget.
+    """The exact shape of drift observed live on Spark (2026-07-30): audio
+    genuinely decodes to less playback duration than the wall-clock time it
+    took to arrive, because PersonaPlex generated it slower than real-time
+    on that hardware (~1.4x observed) -- not because of corpus-corrupting
+    timing drift. The old absolute-tolerance guard rejected every live
+    example with this shape; this test proves the new guard does not.
     """
     _install_fake_audio_modules(monkeypatch)
 
@@ -448,7 +473,10 @@ def test_build_self_distillation_example_raises_on_assistant_timing_drift(
     _write_mono_wav(interruption_wav, silence_seconds=0.2, speech_seconds=0.6)
 
     raw_audio_path = tmp_path / "rollout-0.opus"
-    _write_opus_fixture(raw_audio_path, seconds=1.0, amplitude=0.2)
+    # Decodes to 10.0s -- deliberately much less than the 14.0s wall-clock
+    # span below, reproducing the live ~1.4x sub-realtime ratio observed on
+    # Spark (18.66-18.68s wall-clock for 13.36s decoded in two live runs).
+    _write_opus_fixture(raw_audio_path, seconds=10.0, amplitude=0.1)
 
     rollout = Rollout(
         transcript="Go on, then.",
@@ -457,17 +485,55 @@ def test_build_self_distillation_example_raises_on_assistant_timing_drift(
         delay_seconds=0.3,
         raw_audio_path=raw_audio_path,
         barge_in_seconds=1.0,
-        first_output_received_seconds=0.1,
-        # The fixture decodes to exactly 1.0s of audio, but this claims a
-        # 1.7s wall-clock span -- a 0.7s drift, far outside the ~150ms
-        # jitter budget -- so the guard must raise.
-        last_output_received_seconds=1.8,
-        post_barge_text_frames=[(0.1, "Go on, then.")],
-        output_frames=[(0.1, 0.2), (1.1, 0.2)],
+        first_output_received_seconds=0.5,
+        last_output_received_seconds=14.5,
+        post_barge_text_frames=[(3.0, "Go on, then.")],
+        output_frames=[(0.5, 0.1), (5.0, 0.1), (9.0, 0.1)],
     )
     output_directory = tmp_path / "corpus"
 
-    with pytest.raises(ValueError, match="timing is inconsistent") as excinfo:
+    example = build_self_distillation_example(
+        rollout,
+        scenario_id="aragorn-lore-rangers",
+        character="aragorn",
+        opening_wav_path=opening_wav,
+        interruption_wav_path=interruption_wav,
+        system_prompt="<system>You are Aragorn.<system>",
+        split=Split.TRAIN,
+        output_directory=output_directory,
+    )
+
+    assert example.wav_path.is_file()
+
+
+def test_build_self_distillation_example_raises_on_empty_decoded_audio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_audio_modules(monkeypatch)
+
+    opening_wav = tmp_path / "opening.wav"
+    interruption_wav = tmp_path / "interruption.wav"
+    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=1.0)
+    _write_mono_wav(interruption_wav, silence_seconds=0.2, speech_seconds=0.6)
+
+    raw_audio_path = tmp_path / "rollout-0.opus"
+    raw_audio_path.write_bytes(b"")  # empty Opus stream decodes to zero samples
+
+    rollout = Rollout(
+        transcript="",
+        yield_delay_reward=-0.3,
+        quality_reward=0.8,
+        delay_seconds=0.3,
+        raw_audio_path=raw_audio_path,
+        barge_in_seconds=1.0,
+        first_output_received_seconds=0.5,
+        last_output_received_seconds=0.5,
+        post_barge_text_frames=[],
+        output_frames=[],
+    )
+    output_directory = tmp_path / "corpus"
+
+    with pytest.raises(ValueError, match="decoded to no samples"):
         build_self_distillation_example(
             rollout,
             scenario_id="aragorn-lore-rangers",
@@ -478,8 +544,46 @@ def test_build_self_distillation_example_raises_on_assistant_timing_drift(
             split=Split.TRAIN,
             output_directory=output_directory,
         )
-    assert "aragorn-lore-rangers" in str(excinfo.value)
-    assert not output_directory.exists() or not any(output_directory.iterdir())
+
+
+def test_build_self_distillation_example_raises_on_out_of_order_timestamps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_audio_modules(monkeypatch)
+
+    opening_wav = tmp_path / "opening.wav"
+    interruption_wav = tmp_path / "interruption.wav"
+    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=1.0)
+    _write_mono_wav(interruption_wav, silence_seconds=0.2, speech_seconds=0.6)
+
+    raw_audio_path = tmp_path / "rollout-0.opus"
+    _write_opus_fixture(raw_audio_path, seconds=1.0, amplitude=0.1)
+
+    rollout = Rollout(
+        transcript="Go on, then.",
+        yield_delay_reward=-0.3,
+        quality_reward=0.8,
+        delay_seconds=0.3,
+        raw_audio_path=raw_audio_path,
+        barge_in_seconds=1.0,
+        first_output_received_seconds=5.0,
+        last_output_received_seconds=1.0,  # before first_output -- impossible
+        post_barge_text_frames=[(3.0, "Go on, then.")],
+        output_frames=[(5.0, 0.1)],
+    )
+    output_directory = tmp_path / "corpus"
+
+    with pytest.raises(ValueError, match="out of order"):
+        build_self_distillation_example(
+            rollout,
+            scenario_id="aragorn-lore-rangers",
+            character="aragorn",
+            opening_wav_path=opening_wav,
+            interruption_wav_path=interruption_wav,
+            system_prompt="<system>You are Aragorn.<system>",
+            split=Split.TRAIN,
+            output_directory=output_directory,
+        )
 
 
 def test_build_self_distillation_example_aligns_words_to_real_chunk_timestamps(
@@ -522,18 +626,20 @@ def test_build_self_distillation_example_aligns_words_to_real_chunk_timestamps(
         raw_audio_path=raw_audio_path,
         barge_in_seconds=1.0,
         first_output_received_seconds=0.5,
-        # Consistent with the 15.0s-decoded fixture (0.5 + 15.0 = 15.5) so
-        # the timing-consistency guard doesn't fire.
-        last_output_received_seconds=15.5,
+        # wall_clock_span (22.5) is 1.5x decoded_duration (15.0) -- the same
+        # direction and a similar magnitude to the ~1.4x sub-realtime ratio
+        # observed live on Spark (2026-07-30), so this test exercises the
+        # rescale path instead of degenerating to an identity mapping.
+        last_output_received_seconds=23.0,
         post_barge_text_frames=[
             (0.5, "First chunk words here. "),
             (3.0, "Second chunk words here."),
         ],
-        # Real audible output for the entire decoded span, so the last
-        # chunk's real-speech-end bound coincides with assistant_end_sec
-        # (15.5) here -- this test is about the interior-chunk bound, not
-        # the last-chunk fix (see the dedicated test for that below).
-        output_frames=[(0.5, 0.1), (15.5, 0.1)],
+        # Real audible output for the entire decoded span, matching the new
+        # last_output_received_seconds so the last active frame rescales to
+        # exactly assistant_end_sec -- this test is about the interior-chunk
+        # bound, not the last-chunk fix (see the dedicated test below).
+        output_frames=[(0.5, 0.1), (23.0, 0.1)],
     )
     output_directory = tmp_path / "corpus"
 
@@ -558,16 +664,17 @@ def test_build_self_distillation_example_aligns_words_to_real_chunk_timestamps(
         "First", "chunk", "words", "here", "Second", "chunk", "words", "here",
     ]
 
+    # Rescale factor: decoded_duration (15.0) / wall_clock_span (22.5) = 2/3.
     # Interior chunk: "First chunk words here." spaced uniformly across
-    # [0.5, 3.0) -- 4 words, duration 2.5s, 0.625s per word.
-    _assert_close(words[0][1], (0.5, 1.125))
-    _assert_close(words[1][1], (1.125, 1.75))
-    _assert_close(words[2][1], (1.75, 2.375))
-    _assert_close(words[3][1], (2.375, 3.0))
+    # [rescale(0.5), rescale(3.0)) = [0.5, 0.5 + 5/3) -- 4 words.
+    _assert_close(words[0][1], (0.5, 0.5 + 5 / 12), abs_tol=1e-4)
+    _assert_close(words[1][1], (0.5 + 5 / 12, 0.5 + 10 / 12), abs_tol=1e-4)
+    _assert_close(words[2][1], (0.5 + 10 / 12, 0.5 + 15 / 12), abs_tol=1e-4)
+    _assert_close(words[3][1], (0.5 + 15 / 12, 0.5 + 5 / 3), abs_tol=1e-4)
 
     # Last chunk: "Second chunk words here." spaced uniformly across
-    # [3.0, 15.5) -- 4 words, duration 12.5s, 3.125s per word.
-    _assert_close(words[4][1], (3.0, 6.125))
+    # [rescale(3.0), rescale(23.0)) = [0.5 + 5/3, 15.5) -- 4 words.
+    _assert_close(words[4][1], (0.5 + 5 / 3, 5.5), abs_tol=1e-4)
 
 
 def test_build_self_distillation_example_bounds_last_chunk_by_real_speech_end(
@@ -609,13 +716,13 @@ def test_build_self_distillation_example_bounds_last_chunk_by_real_speech_end(
         raw_audio_path=raw_audio_path,
         barge_in_seconds=1.0,
         first_output_received_seconds=0.5,
-        # Consistent with the 15.0s-decoded fixture (0.5 + 15.0 = 15.5) so
-        # the timing-consistency guard doesn't fire.
-        last_output_received_seconds=15.5,
+        # Same 1.5x wall_clock_span:decoded_duration ratio as the interior-
+        # chunk test above, so this test also exercises the rescale path.
+        last_output_received_seconds=23.0,
         post_barge_text_frames=[(3.0, "Second chunk words here.")],
         # Real audible output (rms above the 0.02 activity threshold) stops
-        # at t=4.0; everything after that is quiet, all the way out to the
-        # 15.5s end of the captured audio.
+        # at raw wall-clock t=4.0; everything after that is quiet, all the
+        # way out to the new 23.0s end of the captured audio.
         output_frames=[
             (0.5, 0.1),
             (1.0, 0.1),
@@ -624,7 +731,7 @@ def test_build_self_distillation_example_bounds_last_chunk_by_real_speech_end(
             (4.0, 0.1),
             (4.5, 0.01),
             (10.0, 0.01),
-            (15.5, 0.01),
+            (23.0, 0.01),
         ],
     )
     output_directory = tmp_path / "corpus"
@@ -644,18 +751,24 @@ def test_build_self_distillation_example_bounds_last_chunk_by_real_speech_end(
     payload = json.loads(example.alignment_path.read_text())
     words_by_text = {word: (start, end) for word, (start, end), _ in payload["alignments"]}
 
-    # Only chunk, bounded by real_speech_end_sec=4.0 (last active output
-    # frame), not assistant_end_sec=15.5 -- 4 words, duration 1.0s over
-    # [3.0, 4.0), 0.25s per word.
-    _assert_close(words_by_text["Second"], (3.0, 3.25))
-    _assert_close(words_by_text["chunk"], (3.25, 3.5))
-    _assert_close(words_by_text["words"], (3.5, 3.75))
+    # Rescale factor: decoded_duration (15.0) / wall_clock_span (22.5) = 2/3.
+    # real_speech_end_sec = rescale(4.0) = 0.5 + 7/3 (the raw 4.0s last-active
+    # frame, rescaled); chunk start = rescale(3.0) = 0.5 + 5/3. Only chunk,
+    # bounded by [0.5 + 5/3, 0.5 + 7/3) -- 4 words, duration 2/3, 1/6 per word.
+    _assert_close(words_by_text["Second"], (0.5 + 5 / 3, 0.5 + 5 / 3 + 1 / 6), abs_tol=1e-4)
+    _assert_close(
+        words_by_text["chunk"], (0.5 + 5 / 3 + 1 / 6, 0.5 + 5 / 3 + 2 / 6), abs_tol=1e-4
+    )
+    _assert_close(
+        words_by_text["words"], (0.5 + 5 / 3 + 2 / 6, 0.5 + 5 / 3 + 3 / 6), abs_tol=1e-4
+    )
     last_word_start, last_word_end = words_by_text["here"]
-    assert abs(last_word_start - 3.75) <= 1e-6
-    assert abs(last_word_end - 4.0) <= 1e-6
-    # The discriminating assertion: the old end_sec=assistant_end_sec
-    # behavior would have put this word's end near 15.5s. Anchoring the
-    # tolerance tightly around the real speech end (4.0s) and far below
-    # where the old bug would land (15.5s) is what makes this test catch
-    # the regression the review found.
+    assert abs(last_word_start - (0.5 + 5 / 3 + 3 / 6)) <= 1e-4
+    assert abs(last_word_end - (0.5 + 7 / 3)) <= 1e-4
+    # The discriminating assertion: the pre-A1 behavior (bounding by
+    # assistant_end_sec=15.5, unrescaled) or the pre-this-fix behavior
+    # (bounding by the raw, un-rescaled real_speech_end=4.0) would both put
+    # this word's end far from 0.5 + 7/3 (~2.83s). This tight bound close to
+    # the true rescaled value, and far from either prior bug's output, is
+    # what makes this test catch a regression of either fix.
     assert last_word_end < 5.0
