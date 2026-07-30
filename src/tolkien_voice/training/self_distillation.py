@@ -159,7 +159,7 @@ def build_self_distillation_example(
                 break
             mixed = channel[target] + sample
             if abs(mixed) >= MAX_SAFE_SAMPLE:
-                mixed = MAX_SAFE_SAMPLE if mixed > 0 else -MAX_SAFE_SAMPLE
+                raise ValueError(f"mixed audio is clipped in {scenario_id}")
             channel[target] = mixed
 
     _mix(right, opening_samples, 0.0)

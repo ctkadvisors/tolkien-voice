@@ -161,3 +161,68 @@ def test_build_self_distillation_example_produces_a_valid_rendered_example(
     payload = json.loads(example.alignment_path.read_text())
     assert payload["system_prompt"] == "<system>You are Aragorn.<system>"
     assert len(payload["alignments"]) >= 1
+
+
+def test_build_self_distillation_example_raises_on_channel_clip(
+    tmp_path: Path,
+) -> None:
+    """Tests that build_self_distillation_example raises ValueError when mixed
+    samples exceed MAX_SAFE_SAMPLE, matching the behavior in render.py."""
+    opening_wav = tmp_path / "opening.wav"
+    interruption_wav = tmp_path / "interruption.wav"
+
+    # Write high-amplitude WAV files that will exceed MAX_SAFE_SAMPLE when mixed.
+    # MAX_SAFE_SAMPLE = int(32_767 * 0.99) = 32438
+    sample_rate = 24_000
+
+    # opening: 1.0 second of amplitude 20000
+    opening_samples = array("h")
+    opening_samples.extend([20000] * round(1.0 * sample_rate))
+    with wave.open(str(opening_wav), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(sample_rate)
+        output.writeframes(opening_samples.tobytes())
+
+    # interruption: 0.2 seconds silence + 0.6 seconds at amplitude 15000
+    # This overlaps with the opening on the right channel and will exceed the limit.
+    interruption_samples = array("h")
+    interruption_samples.extend([0] * round(0.2 * sample_rate))
+    interruption_samples.extend([15000] * round(0.6 * sample_rate))
+    with wave.open(str(interruption_wav), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(sample_rate)
+        output.writeframes(interruption_samples.tobytes())
+
+    raw_audio_path = tmp_path / "rollout-0.opus"
+    _write_opus_fixture(raw_audio_path, seconds=1.0, amplitude=0.05)
+
+    rollout = Rollout(
+        transcript="Go on, then.",
+        yield_delay_reward=-0.3,
+        quality_reward=0.8,
+        delay_seconds=0.3,
+        raw_audio_path=raw_audio_path,
+        barge_in_seconds=0.3,  # Position interruption to overlap with opening
+        first_output_received_seconds=0.1,
+    )
+    output_directory = tmp_path / "corpus"
+
+    try:
+        build_self_distillation_example(
+            rollout,
+            scenario_id="aragorn-lore-rangers",
+            character="aragorn",
+            opening_wav_path=opening_wav,
+            interruption_wav_path=interruption_wav,
+            system_prompt="<system>You are Aragorn.<system>",
+            split=Split.TRAIN,
+            output_directory=output_directory,
+        )
+        # If we get here, the function did not raise as expected
+        assert False, "Expected ValueError for clipped audio"
+    except ValueError as e:
+        # Verify the error message contains "clipped" as specified
+        assert "clipped" in str(e), f"Error message should contain 'clipped': {e}"
+        assert "aragorn-lore-rangers" in str(e), f"Error message should contain scenario_id: {e}"
