@@ -72,6 +72,24 @@ async def collect_rollout_group(
 
     Does not start or stop the PersonaPlex instance itself -- that
     lifecycle belongs to the caller, via scripts/_personaplex_ctl.py.
+
+    A failure on any call -- either probe_native_interruption or
+    compute_quality_reward -- propagates immediately and no partial
+    RolloutGroup is returned; the rollouts already collected for that group
+    are discarded. This is a deliberate fail-fast choice (matching
+    sub-project 1's "don't guess on failure" principle for
+    compute_quality_reward), not an accidental gap, but it means a failure
+    partway through an expensive group costs the already-completed calls
+    too.
+
+    Whether repeated identical-prompt calls to a live PersonaPlex instance
+    actually produce diverse completions is unverified -- nothing in the
+    protocol exposes a sampling/temperature control -- and this has not
+    been checked here because it requires a live instance. See the
+    Verification section of
+    docs/superpowers/specs/2026-07-27-rollout-generation-design.md for the
+    live group_size >= 4 check that needs to run first, before any
+    RolloutGroup this function produces is trusted for a policy update.
     """
     if group_size < 1:
         raise ValueError("group_size must be at least 1")
@@ -85,6 +103,14 @@ async def collect_rollout_group(
             max_wait_seconds=max_wait_seconds,
             response_seconds=response_seconds,
         )
+        # Known-tracked issue, not fixed here: max_wait_seconds bounds the
+        # pre-barge wait-for-speech window, not the post-barge window in
+        # which a yield can actually be observed (that's response_seconds).
+        # This clamp is only correct because collect_rollout_group's
+        # defaults for the two parameters happen to be equal (12.0); a
+        # caller passing a different response_seconds would get the wrong
+        # never-yielded clamp value. Must be resolved before sub-project 3
+        # trusts these rewards -- see the design spec's Data flow section.
         yield_reward = compute_yield_delay_reward(
             result["output_frames"],
             barge_in_seconds=result["barge_in_ms"] / 1000,

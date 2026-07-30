@@ -121,12 +121,20 @@ needs the rationale text carried through the result type.
 
 Inputs are exactly what `collect-native-arm.py` already produces per
 observation: the per-frame `(timestamp, rms)` list, `barge_in_seconds`, and
-the decoded transcript. `observation_window_seconds` is the same value as
-`probe_native_interruption`'s existing `max_wait_seconds` parameter for
-that observation (not a new, separately-tuned quantity) -- the reward's
-"never yielded" case and the probe's own timeout are the same window by
-definition, so this must not drift into a second, independently-chosen
-number. `probe_native_interruption` already computes
+the decoded transcript. **Correction (found during sub-project 2's final
+review):** `observation_window_seconds` is *not* the same quantity as
+`probe_native_interruption`'s `max_wait_seconds`. `max_wait_seconds` bounds
+how long the probe waits for the assistant to start speaking *before* the
+barge-in; the actual post-barge window in which a yield can be observed is
+bounded by `response_seconds` instead. These are two different parameters
+that `collect_rollout_group` (sub-project 2) currently conflates by relying
+on both defaulting to the same value (12.0) -- a caller passing a different
+`response_seconds` (e.g. `scripts/collect-native-arm.py`'s own default of
+4.0 for its post-barge window) would silently get the wrong clamp value for
+the "never yielded" case. This needs a real fix, likely persisting the
+correct window value from `probe_native_interruption`'s return, before
+sub-project 3 trusts the reward's never-yielded clamp value.
+`probe_native_interruption` already computes
 `output_frames` internally during collection but currently discards it --
 this needs to be persisted alongside the raw `.opus` audio (a small,
 additive change to that function's return value / the collector's output
