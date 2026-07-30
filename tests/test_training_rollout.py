@@ -18,6 +18,7 @@ def _rollout(
     first_output_received_seconds: float | None = 0.2,
     last_output_received_seconds: float | None = 0.2,
     post_barge_text_frames: list[tuple[float, str]] | None = None,
+    output_frames: list[tuple[float, float]] | None = None,
 ) -> Rollout:
     return Rollout(
         transcript="text",
@@ -31,6 +32,7 @@ def _rollout(
         post_barge_text_frames=(
             post_barge_text_frames if post_barge_text_frames is not None else [(0.2, "text")]
         ),
+        output_frames=(output_frames if output_frames is not None else [(0.2, 0.08)]),
     )
 
 
@@ -165,6 +167,13 @@ async def test_collect_rollout_group_scores_post_barge_text_only(
     assert group.rollouts[0].first_output_received_seconds == 0.0
     assert group.rollouts[0].last_output_received_seconds == 0.16
     assert group.rollouts[0].post_barge_text_frames == [(0.12, "post-barge reply 1")]
+    assert group.rollouts[0].output_frames == [
+        (0.0, 0.08),
+        (0.04, 0.01),
+        (0.08, 0.01),
+        (0.12, 0.01),
+        (0.16, 0.01),
+    ]
 
 
 @pytest.mark.asyncio

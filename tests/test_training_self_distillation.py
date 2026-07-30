@@ -18,6 +18,22 @@ from tolkien_voice.training.self_distillation import (
 )
 
 
+def _assert_close(
+    actual: tuple[float, float], expected: tuple[float, float], *, abs_tol: float = 1e-6
+) -> None:
+    # Deliberately not pytest.approx: several tests in this file install a
+    # fake `numpy` module into sys.modules (see _install_fake_audio_modules)
+    # so build_self_distillation_example's local `import numpy` picks it up
+    # without requiring the real `evaluation` extra. pytest.approx's
+    # equality check also probes sys.modules["numpy"] (to special-case numpy
+    # arrays) and crashes on the fake module's missing attributes, so plain
+    # abs-difference comparisons are used here instead.
+    actual_start, actual_end = actual
+    expected_start, expected_end = expected
+    assert abs(actual_start - expected_start) <= abs_tol, (actual, expected)
+    assert abs(actual_end - expected_end) <= abs_tol, (actual, expected)
+
+
 def _rollout(
     *,
     yield_delay_reward: float,
@@ -26,6 +42,7 @@ def _rollout(
     first_output_received_seconds: float | None = 0.2,
     last_output_received_seconds: float | None = 0.2,
     post_barge_text_frames: list[tuple[float, str]] | None = None,
+    output_frames: list[tuple[float, float]] | None = None,
 ) -> Rollout:
     return Rollout(
         transcript=f"reply {index}",
@@ -40,6 +57,11 @@ def _rollout(
             post_barge_text_frames
             if post_barge_text_frames is not None
             else [(first_output_received_seconds or 0.0, f"reply {index}")]
+        ),
+        output_frames=(
+            output_frames
+            if output_frames is not None
+            else [(first_output_received_seconds or 0.0, 0.08)]
         ),
     )
 
@@ -312,6 +334,10 @@ def test_build_self_distillation_example_produces_a_valid_rendered_example(
         # build_self_distillation_example should not fire.
         last_output_received_seconds=1.1,
         post_barge_text_frames=[(0.1, "Go on, then.")],
+        # Real audible output for the full decoded span, so the real-speech-end
+        # bound (fixed for the last-chunk case) lands at the same place the
+        # old assistant_end_sec bound did for this fixture.
+        output_frames=[(0.1, 0.2), (1.1, 0.2)],
     )
     output_directory = tmp_path / "corpus"
 
@@ -385,6 +411,7 @@ def test_build_self_distillation_example_raises_on_channel_clip(
         # guard doesn't preempt the clip check this test targets.
         last_output_received_seconds=1.1,
         post_barge_text_frames=[(0.1, "Go on, then.")],
+        output_frames=[(0.1, 0.2), (1.1, 0.2)],
     )
     output_directory = tmp_path / "corpus"
 
@@ -436,6 +463,7 @@ def test_build_self_distillation_example_raises_on_assistant_timing_drift(
         # jitter budget -- so the guard must raise.
         last_output_received_seconds=1.8,
         post_barge_text_frames=[(0.1, "Go on, then.")],
+        output_frames=[(0.1, 0.2), (1.1, 0.2)],
     )
     output_directory = tmp_path / "corpus"
 
@@ -462,7 +490,16 @@ def test_build_self_distillation_example_aligns_words_to_real_chunk_timestamps(
     the entire captured-audio span (first_output_received_seconds to
     assistant_end_sec), which spans the model's pre-barge continuation plus
     a trailing silence window well beyond where these words were actually
-    spoken. This is a regression test for that bug.
+    spoken. This is a regression test for that bug -- specifically the
+    interior-chunk case, where a chunk is bounded by the *next* chunk's real
+    timestamp (already correct before this test was tightened).
+
+    Bounds are exact (not a wide window): with output_frames active across
+    the whole decoded span, the interior chunk's [0.5, 3.0) window and
+    _word_alignments' own uniform-spacing-within-a-chunk formula fully
+    determine each word's start/end, so this test can assert precise values
+    instead of a multi-second range that both the buggy and fixed
+    implementations would satisfy.
     """
     _install_fake_audio_modules(monkeypatch)
 
@@ -492,6 +529,103 @@ def test_build_self_distillation_example_aligns_words_to_real_chunk_timestamps(
             (0.5, "First chunk words here. "),
             (3.0, "Second chunk words here."),
         ],
+        # Real audible output for the entire decoded span, so the last
+        # chunk's real-speech-end bound coincides with assistant_end_sec
+        # (15.5) here -- this test is about the interior-chunk bound, not
+        # the last-chunk fix (see the dedicated test for that below).
+        output_frames=[(0.5, 0.1), (15.5, 0.1)],
+    )
+    output_directory = tmp_path / "corpus"
+
+    example = build_self_distillation_example(
+        rollout,
+        scenario_id="aragorn-lore-rangers",
+        character="aragorn",
+        opening_wav_path=opening_wav,
+        interruption_wav_path=interruption_wav,
+        system_prompt="<system>You are Aragorn.<system>",
+        split=Split.TRAIN,
+        output_directory=output_directory,
+    )
+
+    validate_rendered_examples([example])
+    payload = json.loads(example.alignment_path.read_text())
+    # Indexed by position, not by a word-text-keyed dict: "chunk", "words",
+    # and "here" each appear once per chunk, so a text-keyed lookup would
+    # silently collapse the two chunks' distinct timings onto one entry.
+    words = [(word, tuple(span)) for word, span, _ in payload["alignments"]]
+    assert [word for word, _ in words] == [
+        "First", "chunk", "words", "here", "Second", "chunk", "words", "here",
+    ]
+
+    # Interior chunk: "First chunk words here." spaced uniformly across
+    # [0.5, 3.0) -- 4 words, duration 2.5s, 0.625s per word.
+    _assert_close(words[0][1], (0.5, 1.125))
+    _assert_close(words[1][1], (1.125, 1.75))
+    _assert_close(words[2][1], (1.75, 2.375))
+    _assert_close(words[3][1], (2.375, 3.0))
+
+    # Last chunk: "Second chunk words here." spaced uniformly across
+    # [3.0, 15.5) -- 4 words, duration 12.5s, 3.125s per word.
+    _assert_close(words[4][1], (3.0, 6.125))
+
+
+def test_build_self_distillation_example_bounds_last_chunk_by_real_speech_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The *last* post_barge_text_frames chunk must be bounded by the real
+    end of audible assistant speech (derived from rollout.output_frames),
+    not by assistant_end_sec -- the end of the entire captured assistant
+    audio, which includes a trailing response_seconds window (12.0s by
+    default) of mostly silence after the assistant actually stops talking.
+
+    This is the concrete case the whole-branch review identified as still
+    broken by commit b90ee96 (which only fixed *interior* chunk bounds):
+    a single/last chunk arrives at t=3.0s, but the assistant's real speech
+    (per output_frames) ends at t=4.0s, while the full captured audio spans
+    all the way to t=15.5s (0.5s pre-roll + 15.0s decoded audio). The old
+    `end_sec=assistant_end_sec` behavior would spread this chunk's words
+    across [3.0, 15.5) -- ending near 15.5, seconds after the assistant
+    stopped speaking. The fix must instead bound it to [3.0, 4.0).
+    """
+    _install_fake_audio_modules(monkeypatch)
+
+    opening_wav = tmp_path / "opening.wav"
+    interruption_wav = tmp_path / "interruption.wav"
+    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=1.0)
+    _write_mono_wav(interruption_wav, silence_seconds=0.2, speech_seconds=0.6)
+
+    raw_audio_path = tmp_path / "rollout-0.opus"
+    # 15s of captured assistant audio -- the assistant is only actually
+    # talking for the first ~3.5s of it (per output_frames below); the rest
+    # is the trailing response_seconds silence window.
+    _write_opus_fixture(raw_audio_path, seconds=15.0, amplitude=0.1)
+
+    rollout = Rollout(
+        transcript="Second chunk words here.",
+        yield_delay_reward=-0.3,
+        quality_reward=0.8,
+        delay_seconds=0.3,
+        raw_audio_path=raw_audio_path,
+        barge_in_seconds=1.0,
+        first_output_received_seconds=0.5,
+        # Consistent with the 15.0s-decoded fixture (0.5 + 15.0 = 15.5) so
+        # the timing-consistency guard doesn't fire.
+        last_output_received_seconds=15.5,
+        post_barge_text_frames=[(3.0, "Second chunk words here.")],
+        # Real audible output (rms above the 0.02 activity threshold) stops
+        # at t=4.0; everything after that is quiet, all the way out to the
+        # 15.5s end of the captured audio.
+        output_frames=[
+            (0.5, 0.1),
+            (1.0, 0.1),
+            (2.0, 0.1),
+            (3.0, 0.1),
+            (4.0, 0.1),
+            (4.5, 0.01),
+            (10.0, 0.01),
+            (15.5, 0.01),
+        ],
     )
     output_directory = tmp_path / "corpus"
 
@@ -510,13 +644,18 @@ def test_build_self_distillation_example_aligns_words_to_real_chunk_timestamps(
     payload = json.loads(example.alignment_path.read_text())
     words_by_text = {word: (start, end) for word, (start, end), _ in payload["alignments"]}
 
-    first_start, first_end = words_by_text["First"]
-    second_start, second_end = words_by_text["Second"]
-
-    # Each chunk's words must land near that chunk's own real timestamp --
-    # not proportionally spread across the full ~15.5s captured-audio span,
-    # which is what the uniform-spacing bug produced.
-    assert 0.5 <= first_start < 3.0
-    assert 0.5 <= first_end < 3.0
-    assert 3.0 <= second_start < 15.5
-    assert 3.0 <= second_end < 15.5
+    # Only chunk, bounded by real_speech_end_sec=4.0 (last active output
+    # frame), not assistant_end_sec=15.5 -- 4 words, duration 1.0s over
+    # [3.0, 4.0), 0.25s per word.
+    _assert_close(words_by_text["Second"], (3.0, 3.25))
+    _assert_close(words_by_text["chunk"], (3.25, 3.5))
+    _assert_close(words_by_text["words"], (3.5, 3.75))
+    last_word_start, last_word_end = words_by_text["here"]
+    assert abs(last_word_start - 3.75) <= 1e-6
+    assert abs(last_word_end - 4.0) <= 1e-6
+    # The discriminating assertion: the old end_sec=assistant_end_sec
+    # behavior would have put this word's end near 15.5s. Anchoring the
+    # tolerance tightly around the real speech end (4.0s) and far below
+    # where the old bug would land (15.5s) is what makes this test catch
+    # the regression the review found.
+    assert last_word_end < 5.0

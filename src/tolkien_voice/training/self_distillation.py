@@ -114,20 +114,48 @@ def _word_alignments(transcript: str, *, start_sec: float, end_sec: float) -> li
     return alignments
 
 
+def _last_active_frame_seconds(
+    frames: list[tuple[float, float]], *, activity_threshold: float = 0.02
+) -> float | None:
+    """Returns the received_seconds of the last frame whose rms is at or
+    above activity_threshold -- the last moment there was real audible
+    assistant output -- or None if no frame in frames is ever active.
+
+    frames is the same (received_seconds, rms) shape as
+    probe_native_interruption's output_frames / Rollout.output_frames.
+    activity_threshold mirrors probe_native_interruption's own
+    activity_threshold default (0.02), which is the threshold that function
+    already uses to decide the assistant *started* speaking; using the same
+    value here keeps "did it speak" and "when did it stop" symmetric rather
+    than inventing a second magic number.
+    """
+    last_active: float | None = None
+    for received_seconds, rms in frames:
+        if rms >= activity_threshold:
+            last_active = received_seconds
+    return last_active
+
+
 def _word_alignments_from_frames(
-    frames: list[tuple[float, str]], *, end_sec: float
+    frames: list[tuple[float, str]], *, real_speech_end_sec: float
 ) -> list[list]:
     """Builds word-level alignments from real per-chunk timestamps rather
     than uniformly spacing a transcript across an entire captured turn.
     Each chunk's words are spaced across [this chunk's timestamp, the next
     chunk's timestamp) -- or, for the last chunk, [this chunk's timestamp,
-    end_sec) -- reusing _word_alignments per chunk so a chunk's own words
-    still get sensible internal spacing without assuming the whole
-    transcript arrived at a single instant.
+    real_speech_end_sec) -- reusing _word_alignments per chunk so a chunk's
+    own words still get sensible internal spacing without assuming the
+    whole transcript arrived at a single instant.
+
+    real_speech_end_sec must be the real end of audible assistant speech
+    (see _last_active_frame_seconds), not the end of the full captured
+    audio span -- that span includes a trailing response_seconds window of
+    mostly silence, and bounding the last chunk by it would spread that
+    chunk's words across seconds of silence it was never spoken over.
     """
     alignments: list[list] = []
     for index, (chunk_start, chunk_text) in enumerate(frames):
-        chunk_end = frames[index + 1][0] if index + 1 < len(frames) else end_sec
+        chunk_end = frames[index + 1][0] if index + 1 < len(frames) else real_speech_end_sec
         chunk_end = max(chunk_end, chunk_start)
         alignments.extend(_word_alignments(chunk_text, start_sec=chunk_start, end_sec=chunk_end))
     return alignments
@@ -230,8 +258,19 @@ def build_self_distillation_example(
     os.replace(temporary_wav, wav_path)
     wav_path.chmod(0o600)
 
+    # The last post_barge_text_frames chunk must be bounded by the real end
+    # of audible assistant speech, not assistant_end_sec -- assistant_end_sec
+    # is the end of the entire captured assistant audio, which includes a
+    # trailing response_seconds window (default 12.0s) of mostly silence
+    # after the assistant actually stops talking. Falling back to
+    # assistant_end_sec when no frame is ever active is a safe degenerate
+    # default (matches the old behavior) rather than crashing on audio that
+    # apparently never had any real output.
+    real_speech_end_sec = _last_active_frame_seconds(rollout.output_frames)
+    if real_speech_end_sec is None:
+        real_speech_end_sec = assistant_end_sec
     alignments = _word_alignments_from_frames(
-        rollout.post_barge_text_frames, end_sec=assistant_end_sec
+        rollout.post_barge_text_frames, real_speech_end_sec=real_speech_end_sec
     )
     alignment_path = output_directory / f"{example_id}.json"
     temporary_alignment = alignment_path.with_suffix(".json.tmp")
