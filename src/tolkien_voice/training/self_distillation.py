@@ -207,10 +207,18 @@ def build_self_distillation_example(
     output_directory: Path,
 ) -> RenderedExample:
     """Reconstructs the real recorded session timeline: opening_wav_path
-    at t=0 and interruption_wav_path positioned so its audible onset lands
-    at rollout.barge_in_seconds on the user (right) channel;
-    rollout.raw_audio_path decoded from Opus and positioned starting at
-    rollout.first_output_received_seconds on the assistant (left) channel.
+    at t=0 on the user (right) channel; rollout.raw_audio_path decoded from
+    Opus and positioned starting at rollout.first_output_received_seconds
+    on the assistant (left) channel, playing continuously at its own
+    decoded length (PersonaPlex can generate slower than real-time, so this
+    is shorter than the wall-clock time the audio took to arrive -- see
+    _rescale_to_placed_span); interruption_wav_path positioned on the user
+    channel so its audible onset lands rollout.delay_seconds before the
+    assistant's real (rescaled) speech end -- using the ground-truth
+    measured delay rather than a raw or rescaled barge_in_seconds, so the
+    reconstructed gap between interruption and yield matches what was
+    actually measured, without needing to resample the user channel's own
+    content to stay coherent with the assistant's compressed timeline.
     """
     del character  # not needed for construction; kept for caller symmetry with scenario metadata
     output_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -234,13 +242,60 @@ def build_self_distillation_example(
                 f"first_output_received_seconds ({first_output})"
             )
 
-    onset_offset = leading_silence_seconds(interruption_wav_path)
-    interruption_start_sec = max(0.0, rollout.barge_in_seconds - onset_offset)
     assistant_start_sec = first_output or 0.0
+    assistant_end_sec = assistant_start_sec + decoded_duration
+
+    def _rescale(wall_clock_seconds: float) -> float:
+        if wall_clock_span is None or first_output is None:
+            return wall_clock_seconds
+        return _rescale_to_placed_span(
+            wall_clock_seconds,
+            first_output_received_seconds=first_output,
+            wall_clock_span=wall_clock_span,
+            assistant_start_sec=assistant_start_sec,
+            decoded_duration=decoded_duration,
+        )
+
+    # The real end of audible assistant speech, rescaled onto the placed
+    # (possibly compressed) audio span -- assistant_end_sec is the end of
+    # the entire captured assistant audio, which includes a trailing
+    # response_seconds window (default 12.0s) of mostly silence after the
+    # assistant actually stops talking, so it is not this value. Falling
+    # back to assistant_end_sec when no output frame is ever active is a
+    # safe degenerate default (matches the pre-rescale behavior) rather
+    # than crashing on audio that apparently never had any real output.
+    # Computed here (before interruption placement below) because the
+    # interruption's own placement now derives from this value.
+    real_speech_end_sec = _last_active_frame_seconds(rollout.output_frames)
+    real_speech_end_sec = (
+        _rescale(real_speech_end_sec) if real_speech_end_sec is not None else assistant_end_sec
+    )
+
+    onset_offset = leading_silence_seconds(interruption_wav_path)
+    if rollout.delay_seconds is not None:
+        # Place the interruption's audible onset delay_seconds before the
+        # assistant's real (rescaled) speech end -- delay_seconds is the
+        # ground-truth wall-clock gap measure_interruption_response already
+        # computed between the interruption becoming audible and the
+        # assistant going quiet, independent of how this function
+        # reconstructs audio. This guarantees the reconstructed gap matches
+        # what was actually measured, rather than deriving the
+        # interruption's position from a rescale of raw barge_in_seconds,
+        # which would need the user channel's own audio content resampled
+        # to stay coherent with the assistant's compressed timeline -- an
+        # unwanted expansion of scope this correction avoids entirely.
+        interruption_start_sec = max(
+            0.0, (real_speech_end_sec - rollout.delay_seconds) - onset_offset
+        )
+    else:
+        # delay_seconds is None only for a rollout that never yielded --
+        # select_best_rollout's reward gate excludes those in practice, but
+        # the field is typed float | None, so degrade to the original raw
+        # placement rather than computing a nonsensical delay-based offset.
+        interruption_start_sec = max(0.0, rollout.barge_in_seconds - onset_offset)
 
     opening_end_sec = len(opening_samples) / SAMPLE_RATE
     interruption_end_sec = interruption_start_sec + len(interruption_samples) / SAMPLE_RATE
-    assistant_end_sec = assistant_start_sec + len(assistant_samples) / SAMPLE_RATE
     total_seconds = max(opening_end_sec, interruption_end_sec, assistant_end_sec)
     total_frames = math.ceil(total_seconds * SAMPLE_RATE)
 
@@ -277,36 +332,9 @@ def build_self_distillation_example(
     os.replace(temporary_wav, wav_path)
     wav_path.chmod(0o600)
 
-    def _rescale(wall_clock_seconds: float) -> float:
-        if wall_clock_span is None or first_output is None:
-            return wall_clock_seconds
-        return _rescale_to_placed_span(
-            wall_clock_seconds,
-            first_output_received_seconds=first_output,
-            wall_clock_span=wall_clock_span,
-            assistant_start_sec=assistant_start_sec,
-            decoded_duration=decoded_duration,
-        )
-
-    # The last post_barge_text_frames chunk must be bounded by the real end
-    # of audible assistant speech, not assistant_end_sec -- assistant_end_sec
-    # is the end of the entire captured assistant audio, which includes a
-    # trailing response_seconds window (default 12.0s) of mostly silence
-    # after the assistant actually stops talking. Falling back to
-    # assistant_end_sec when no frame is ever active is a safe degenerate
-    # default (matches the old behavior) rather than crashing on audio that
-    # apparently never had any real output. Both this value and each
-    # post_barge_text_frames chunk's own timestamp are wall-clock times that
-    # may span more real time than the audio's actual placed span (PersonaPlex
-    # can generate slower than real-time) -- rescale both onto
-    # [assistant_start_sec, assistant_end_sec] before using them as chunk
-    # boundaries, or a chunk could be timestamped after the audio it's
-    # describing has already ended in the reconstructed WAV.
-    real_speech_end_sec = _last_active_frame_seconds(rollout.output_frames)
-    real_speech_end_sec = (
-        _rescale(real_speech_end_sec) if real_speech_end_sec is not None else assistant_end_sec
-    )
-    rescaled_frames = [(_rescale(chunk_start), text) for chunk_start, text in rollout.post_barge_text_frames]
+    rescaled_frames = [
+        (_rescale(chunk_start), text) for chunk_start, text in rollout.post_barge_text_frames
+    ]
     alignments = _word_alignments_from_frames(
         rescaled_frames, real_speech_end_sec=real_speech_end_sec
     )

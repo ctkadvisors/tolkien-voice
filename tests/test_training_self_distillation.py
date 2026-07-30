@@ -506,6 +506,95 @@ def test_build_self_distillation_example_tolerates_sub_realtime_generation(
     assert example.wav_path.is_file()
 
 
+def test_build_self_distillation_example_places_interruption_relative_to_real_yield(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The interruption's audible onset in the reconstructed WAV must land
+    delay_seconds before the assistant's real (rescaled) speech end -- not
+    at a raw barge_in_seconds, which can place the interruption after the
+    assistant's compressed audio has already gone quiet under sub-realtime
+    generation, teaching the model to yield before an interruption it
+    hasn't heard yet. See the design spec's "Correction" section.
+    """
+    _install_fake_audio_modules(monkeypatch)
+
+    opening_wav = tmp_path / "opening.wav"
+    interruption_wav = tmp_path / "interruption.wav"
+    # Short opening (0.1s) so it can never overlap the interruption, which
+    # this scenario places around t=5.5s.
+    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=0.1)
+    # Silence prefix is an exact multiple of FRAME_SECONDS (0.04s * 2 =
+    # 0.08s) so leading_silence_seconds returns exactly 0.08, avoiding
+    # frame-quantization ambiguity in this test's expected value.
+    _write_mono_wav(interruption_wav, silence_seconds=0.08, speech_seconds=0.6)
+
+    raw_audio_path = tmp_path / "rollout-0.opus"
+    # Same 5/7 compression ratio as
+    # test_build_self_distillation_example_tolerates_sub_realtime_generation
+    # (decoded 10.0s over a 14.0s wall-clock span).
+    _write_opus_fixture(raw_audio_path, seconds=10.0, amplitude=0.1)
+
+    rollout = Rollout(
+        transcript="Go on, then.",
+        yield_delay_reward=-1.0,
+        quality_reward=0.8,
+        delay_seconds=1.0,
+        raw_audio_path=raw_audio_path,
+        barge_in_seconds=6.0,
+        first_output_received_seconds=0.5,
+        last_output_received_seconds=14.5,
+        post_barge_text_frames=[(9.5, "Go on, then.")],
+        # Last active frame at raw t=9.0 -- rescales to
+        # 0.5 + (9.0 - 0.5) * (10.0 / 14.0) = 46/7 (~6.571s).
+        output_frames=[(0.5, 0.1), (5.0, 0.1), (9.0, 0.1)],
+    )
+    output_directory = tmp_path / "corpus"
+
+    example = build_self_distillation_example(
+        rollout,
+        scenario_id="aragorn-lore-rangers",
+        character="aragorn",
+        opening_wav_path=opening_wav,
+        interruption_wav_path=interruption_wav,
+        system_prompt="<system>You are Aragorn.<system>",
+        split=Split.TRAIN,
+        output_directory=output_directory,
+    )
+
+    # real_speech_end_sec (rescaled) = 46/7. The interruption's own silence
+    # prefix (onset_offset) exactly cancels out of the audible-onset
+    # position: interruption_start_sec = (46/7 - delay_seconds) -
+    # onset_offset, and the loud content starts onset_offset into the
+    # clip, so audible onset = 46/7 - delay_seconds regardless of
+    # onset_offset's value.
+    expected_audible_onset_sec = 46 / 7 - 1.0  # ~5.571428571
+    assistant_end_sec = 0.5 + 10.0  # assistant_start_sec + decoded_duration
+
+    with wave.open(str(example.wav_path), "rb") as source:
+        sample_rate = source.getframerate()
+        interleaved = array("h")
+        interleaved.frombytes(source.readframes(source.getnframes()))
+    right_channel = interleaved[1::2]  # user/interruption channel
+
+    def _right_channel_rms(start_sec: float, duration_sec: float) -> float:
+        start = round(start_sec * sample_rate)
+        end = round((start_sec + duration_sec) * sample_rate)
+        window = right_channel[max(0, start) : max(0, end)]
+        if not window:
+            return 0.0
+        return (sum(sample * sample for sample in window) / len(window)) ** 0.5
+
+    # Silent just before the expected onset -- the interruption has not
+    # started yet, and the short opening ended long ago.
+    assert _right_channel_rms(expected_audible_onset_sec - 0.5, 0.3) < 100
+    # Audible at and after the expected onset.
+    assert _right_channel_rms(expected_audible_onset_sec + 0.05, 0.3) > 1000
+    # The interruption's onset lands comfortably before the assistant's
+    # placed audio ends -- the concrete failure mode this correction fixes
+    # (the pre-correction code could place it after this point).
+    assert expected_audible_onset_sec < assistant_end_sec
+
+
 def test_build_self_distillation_example_raises_on_empty_decoded_audio(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
