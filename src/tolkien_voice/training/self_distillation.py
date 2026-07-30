@@ -114,6 +114,25 @@ def _word_alignments(transcript: str, *, start_sec: float, end_sec: float) -> li
     return alignments
 
 
+def _word_alignments_from_frames(
+    frames: list[tuple[float, str]], *, end_sec: float
+) -> list[list]:
+    """Builds word-level alignments from real per-chunk timestamps rather
+    than uniformly spacing a transcript across an entire captured turn.
+    Each chunk's words are spaced across [this chunk's timestamp, the next
+    chunk's timestamp) -- or, for the last chunk, [this chunk's timestamp,
+    end_sec) -- reusing _word_alignments per chunk so a chunk's own words
+    still get sensible internal spacing without assuming the whole
+    transcript arrived at a single instant.
+    """
+    alignments: list[list] = []
+    for index, (chunk_start, chunk_text) in enumerate(frames):
+        chunk_end = frames[index + 1][0] if index + 1 < len(frames) else end_sec
+        chunk_end = max(chunk_end, chunk_start)
+        alignments.extend(_word_alignments(chunk_text, start_sec=chunk_start, end_sec=chunk_end))
+    return alignments
+
+
 def build_self_distillation_example(
     rollout: Rollout,
     *,
@@ -211,8 +230,8 @@ def build_self_distillation_example(
     os.replace(temporary_wav, wav_path)
     wav_path.chmod(0o600)
 
-    alignments = _word_alignments(
-        rollout.transcript, start_sec=assistant_start_sec, end_sec=assistant_end_sec
+    alignments = _word_alignments_from_frames(
+        rollout.post_barge_text_frames, end_sec=assistant_end_sec
     )
     alignment_path = output_directory / f"{example_id}.json"
     temporary_alignment = alignment_path.with_suffix(".json.tmp")

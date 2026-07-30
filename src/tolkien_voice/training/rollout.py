@@ -21,6 +21,7 @@ class Rollout(BaseModel):
     barge_in_seconds: float
     first_output_received_seconds: float | None
     last_output_received_seconds: float | None
+    post_barge_text_frames: list[tuple[float, str]]
 
 
 class RolloutGroup(BaseModel):
@@ -136,6 +137,7 @@ async def collect_rollout_group(
                 barge_in_seconds=result["barge_in_ms"] / 1000,
                 first_output_received_seconds=result["first_output_received_seconds"],
                 last_output_received_seconds=result["last_output_received_seconds"],
+                post_barge_text_frames=result["post_barge_text_frames"],
             )
         )
     return RolloutGroup(probe_id=probe_id, character=character, rollouts=rollouts)

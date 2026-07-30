@@ -25,6 +25,7 @@ def _rollout(
     index: int = 0,
     first_output_received_seconds: float | None = 0.2,
     last_output_received_seconds: float | None = 0.2,
+    post_barge_text_frames: list[tuple[float, str]] | None = None,
 ) -> Rollout:
     return Rollout(
         transcript=f"reply {index}",
@@ -35,6 +36,11 @@ def _rollout(
         barge_in_seconds=1.1,
         first_output_received_seconds=first_output_received_seconds,
         last_output_received_seconds=last_output_received_seconds,
+        post_barge_text_frames=(
+            post_barge_text_frames
+            if post_barge_text_frames is not None
+            else [(first_output_received_seconds or 0.0, f"reply {index}")]
+        ),
     )
 
 
@@ -305,6 +311,7 @@ def test_build_self_distillation_example_produces_a_valid_rendered_example(
         # with the decoded duration and the timing-consistency guard in
         # build_self_distillation_example should not fire.
         last_output_received_seconds=1.1,
+        post_barge_text_frames=[(0.1, "Go on, then.")],
     )
     output_directory = tmp_path / "corpus"
 
@@ -377,6 +384,7 @@ def test_build_self_distillation_example_raises_on_channel_clip(
         # Consistent with the 1.0s-decoded fixture so the timing-consistency
         # guard doesn't preempt the clip check this test targets.
         last_output_received_seconds=1.1,
+        post_barge_text_frames=[(0.1, "Go on, then.")],
     )
     output_directory = tmp_path / "corpus"
 
@@ -427,6 +435,7 @@ def test_build_self_distillation_example_raises_on_assistant_timing_drift(
         # 1.7s wall-clock span -- a 0.7s drift, far outside the ~150ms
         # jitter budget -- so the guard must raise.
         last_output_received_seconds=1.8,
+        post_barge_text_frames=[(0.1, "Go on, then.")],
     )
     output_directory = tmp_path / "corpus"
 
@@ -443,3 +452,71 @@ def test_build_self_distillation_example_raises_on_assistant_timing_drift(
         )
     assert "aragorn-lore-rangers" in str(excinfo.value)
     assert not output_directory.exists() or not any(output_directory.iterdir())
+
+
+def test_build_self_distillation_example_aligns_words_to_real_chunk_timestamps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Word alignments must come from each post_barge_text_frames chunk's own
+    real timestamp, not from spreading the whole transcript uniformly across
+    the entire captured-audio span (first_output_received_seconds to
+    assistant_end_sec), which spans the model's pre-barge continuation plus
+    a trailing silence window well beyond where these words were actually
+    spoken. This is a regression test for that bug.
+    """
+    _install_fake_audio_modules(monkeypatch)
+
+    opening_wav = tmp_path / "opening.wav"
+    interruption_wav = tmp_path / "interruption.wav"
+    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=1.0)
+    _write_mono_wav(interruption_wav, silence_seconds=0.2, speech_seconds=0.6)
+
+    raw_audio_path = tmp_path / "rollout-0.opus"
+    # 15s of captured assistant audio -- typical of a session that includes
+    # a pre-barge continuation, the post-barge yield, and a trailing
+    # response_seconds silence window.
+    _write_opus_fixture(raw_audio_path, seconds=15.0, amplitude=0.1)
+
+    rollout = Rollout(
+        transcript="First chunk words here. Second chunk words here.",
+        yield_delay_reward=-0.3,
+        quality_reward=0.8,
+        delay_seconds=0.3,
+        raw_audio_path=raw_audio_path,
+        barge_in_seconds=1.0,
+        first_output_received_seconds=0.5,
+        # Consistent with the 15.0s-decoded fixture (0.5 + 15.0 = 15.5) so
+        # the timing-consistency guard doesn't fire.
+        last_output_received_seconds=15.5,
+        post_barge_text_frames=[
+            (0.5, "First chunk words here. "),
+            (3.0, "Second chunk words here."),
+        ],
+    )
+    output_directory = tmp_path / "corpus"
+
+    example = build_self_distillation_example(
+        rollout,
+        scenario_id="aragorn-lore-rangers",
+        character="aragorn",
+        opening_wav_path=opening_wav,
+        interruption_wav_path=interruption_wav,
+        system_prompt="<system>You are Aragorn.<system>",
+        split=Split.TRAIN,
+        output_directory=output_directory,
+    )
+
+    validate_rendered_examples([example])
+    payload = json.loads(example.alignment_path.read_text())
+    words_by_text = {word: (start, end) for word, (start, end), _ in payload["alignments"]}
+
+    first_start, first_end = words_by_text["First"]
+    second_start, second_end = words_by_text["Second"]
+
+    # Each chunk's words must land near that chunk's own real timestamp --
+    # not proportionally spread across the full ~15.5s captured-audio span,
+    # which is what the uniform-spacing bug produced.
+    assert 0.5 <= first_start < 3.0
+    assert 0.5 <= first_end < 3.0
+    assert 3.0 <= second_start < 15.5
+    assert 3.0 <= second_end < 15.5

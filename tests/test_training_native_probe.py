@@ -325,6 +325,16 @@ async def test_probe_native_interruption_exposes_output_frames_for_reward_reuse(
             if self._send_count == 1:
                 for _ in range(3):
                     await self._queue.put(FakeMessage(ws_msg_type.BINARY, b"\x01speech"))
+                # Sent while the opening clip is still going out, well before
+                # the interruption clip (and therefore well before
+                # barge_in_seconds gets set) -- must land in the full
+                # interruption_text but NOT in post_barge_text_frames.
+                await self._queue.put(FakeMessage(ws_msg_type.BINARY, b"\x02Before barge. "))
+            elif self._send_count == 2:
+                # Sent while the interruption clip is going out, i.e. at (or
+                # immediately after) the moment barge_in_seconds is
+                # computed -- must land in post_barge_text_frames.
+                await self._queue.put(FakeMessage(ws_msg_type.BINARY, b"\x02After barge."))
 
     websocket = FakeWebSocket()
 
@@ -427,3 +437,14 @@ async def test_probe_native_interruption_exposes_output_frames_for_reward_reuse(
     assert result["max_wait_seconds"] == 1.0
     assert result["first_output_received_seconds"] == result["output_frames"][0][0]
     assert result["last_output_received_seconds"] == result["output_frames"][-1][0]
+
+    # post_barge_text_frames keeps each chunk's own real timestamp (unlike
+    # post_barge_text, which discards timestamps by concatenating chunks
+    # into a single string) -- and must include only chunks received at or
+    # after barge_in_seconds.
+    barge_in_seconds = result["barge_in_ms"] / 1000
+    assert "Before barge" in result["interruption_text"]
+    assert all(received >= barge_in_seconds for received, _ in result["post_barge_text_frames"])
+    assert any(text == "After barge." for _, text in result["post_barge_text_frames"])
+    assert all("Before barge" not in text for _, text in result["post_barge_text_frames"])
+    assert result["post_barge_text"] == "After barge."
