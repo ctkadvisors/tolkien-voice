@@ -41,6 +41,7 @@ async def build(args: argparse.Namespace) -> list[RenderedExample]:
     registry = CharacterRegistry.from_directory(args.character_dir)
     examples: list[RenderedExample] = []
     skipped: list[str] = []
+    failed: list[tuple[str, str]] = []
     with JudgeClient(base_url=args.judge_base_url, model=args.judge_model) as judge:
         for character in args.characters:
             resolved = registry.resolve(character)
@@ -70,19 +71,31 @@ async def build(args: argparse.Namespace) -> list[RenderedExample]:
                 if best is None:
                     skipped.append(probe.id)
                     continue
-                example = build_self_distillation_example(
-                    best,
-                    scenario_id=probe.id,
-                    character=character,
-                    opening_wav_path=opening_wav,
-                    interruption_wav_path=args.interruption_audio,
-                    system_prompt=resolved.text_prompt,
-                    split=Split.TRAIN,
-                    output_directory=args.output_directory / "audio",
-                )
+                # A single scenario's rendered audio being rejected (e.g. an
+                # all-zero channel from a genuinely near-empty extracted
+                # segment) must not discard every other scenario's already-
+                # completed, expensive live sampling -- catch here and keep
+                # going, rather than letting write_moshi_manifests's own
+                # validation abort the whole run at the very end.
+                try:
+                    example = build_self_distillation_example(
+                        best,
+                        scenario_id=probe.id,
+                        character=character,
+                        opening_wav_path=opening_wav,
+                        interruption_wav_path=args.interruption_audio,
+                        system_prompt=resolved.text_prompt,
+                        split=Split.TRAIN,
+                        output_directory=args.output_directory / "audio",
+                    )
+                except ValueError as error:
+                    failed.append((probe.id, str(error)))
+                    continue
                 examples.append(example)
     if skipped:
         print(f"skipped (no rollout cleared the gate): {skipped}")
+    if failed:
+        print(f"failed (rendering error, scenario dropped): {failed}")
     return examples
 
 
