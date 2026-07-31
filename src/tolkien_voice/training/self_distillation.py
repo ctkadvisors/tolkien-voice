@@ -189,6 +189,11 @@ def build_self_distillation_example(
             f"barge-in (decoded {len(assistant_samples)} samples, barge-in "
             f"at sample {extraction_start})"
         )
+    if rollout.delay_seconds is None:
+        raise ValueError(
+            f"cannot extract post-barge audio for {scenario_id}: "
+            f"rollout.delay_seconds is None (this rollout never yielded)"
+        )
     extraction_end = min(
         len(assistant_samples), extraction_start + round(rollout.delay_seconds * SAMPLE_RATE)
     )
@@ -197,7 +202,7 @@ def build_self_distillation_example(
     onset_offset = leading_silence_seconds(interruption_wav_path)
     opening_end_sec = len(opening_samples) / SAMPLE_RATE
     interruption_onset_sec = max(opening_end_sec, rollout.barge_in_seconds)
-    interruption_start_sec = interruption_onset_sec - onset_offset
+    interruption_start_sec = max(0.0, interruption_onset_sec - onset_offset)
     assistant_start_sec = interruption_onset_sec
 
     interruption_end_sec = interruption_start_sec + len(interruption_samples) / SAMPLE_RATE

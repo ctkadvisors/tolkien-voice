@@ -533,6 +533,132 @@ def test_build_self_distillation_example_places_assistant_segment_at_interruptio
     assert _left_channel_rms(expected_onset_sec + 0.05, 0.2) > 1000
 
 
+def test_build_self_distillation_example_clamps_interruption_start_when_onset_offset_exceeds_onset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test for the missing max(0.0, ...) floor: a short opening
+    (0.5s) combined with an interruption clip whose leading silence (2.0s)
+    exceeds interruption_onset_sec (max(0.5, 0.2) = 0.5) used to drive
+    interruption_start_sec negative (0.5 - 2.0 = -1.5), which _mix's inner
+    loop would then silently wrap into negative array indices instead of
+    raising. With the max(0.0, ...) clamp in place, this must complete
+    without error and produce a valid example, with the interruption's
+    audible content landing at or after opening_end_sec.
+    """
+    _install_fake_audio_modules(monkeypatch)
+
+    opening_wav = tmp_path / "opening.wav"
+    interruption_wav = tmp_path / "interruption.wav"
+    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=0.5)
+    # 2.0s leading silence -- exceeds interruption_onset_sec (0.5) so
+    # onset_offset > interruption_onset_sec, the exact trigger condition.
+    _write_mono_wav(interruption_wav, silence_seconds=2.0, speech_seconds=0.3)
+
+    raw_audio_path = tmp_path / "rollout-0.opus"
+    _write_opus_fixture(raw_audio_path, seconds=2.0, amplitude=0.2)
+
+    rollout = Rollout(
+        transcript="Go on, then.",
+        yield_delay_reward=-0.3,
+        quality_reward=0.8,
+        delay_seconds=0.3,
+        raw_audio_path=raw_audio_path,
+        # Smaller than opening_end_sec (0.5), so max(opening_end_sec,
+        # barge_in_seconds) picks the opening's own end -- 0.5 -- matching
+        # the reviewer's demonstrated reproduction.
+        barge_in_seconds=0.2,
+        first_output_received_seconds=0.1,
+        last_output_received_seconds=2.1,
+        post_barge_text_frames=[(0.2, "Go on, then.")],
+        output_frames=[(round(i * 0.04, 6), 0.1) for i in range(50)],
+    )
+    output_directory = tmp_path / "corpus"
+
+    example = build_self_distillation_example(
+        rollout,
+        scenario_id="aragorn-lore-rangers",
+        character="aragorn",
+        opening_wav_path=opening_wav,
+        interruption_wav_path=interruption_wav,
+        system_prompt="<system>You are Aragorn.<system>",
+        split=Split.TRAIN,
+        output_directory=output_directory,
+    )
+
+    validate_rendered_examples([example])
+
+    with wave.open(str(example.wav_path), "rb") as source:
+        sample_rate = source.getframerate()
+        interleaved = array("h")
+        interleaved.frombytes(source.readframes(source.getnframes()))
+    right_channel = interleaved[1::2]  # user channel (opening + interruption)
+
+    def _right_channel_rms(start_sec: float, duration_sec: float) -> float:
+        start = round(start_sec * sample_rate)
+        end = round((start_sec + duration_sec) * sample_rate)
+        window = right_channel[max(0, start) : max(0, end)]
+        if not window:
+            return 0.0
+        return (sum(sample * sample for sample in window) / len(window)) ** 0.5
+
+    opening_end_sec = 0.5
+    # No interruption content should be audible before the opening ends --
+    # if the pre-fix bug had wrapped negative indices to the buffer's end,
+    # this would instead show spurious energy at the wrong place, or the
+    # call would have raised/crashed before ever reaching this assertion.
+    assert _right_channel_rms(0.0, opening_end_sec) > 1000
+    # The interruption's own audible content lands at its natural onset
+    # (interruption_start_sec + onset_offset = 0.0 + 2.0 = 2.0), which is
+    # at or after opening_end_sec -- never overlapping/pre-empting it.
+    assert _right_channel_rms(2.05, 0.2) > 1000
+
+
+def test_build_self_distillation_example_raises_clear_error_when_delay_seconds_is_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: rollout.delay_seconds is typed float | None, but the
+    extraction-end calculation used to multiply it by SAMPLE_RATE
+    unconditionally, raising an unrelated TypeError deep inside the
+    function when it was None. Must now raise a clear, specific ValueError
+    instead.
+    """
+    _install_fake_audio_modules(monkeypatch)
+
+    opening_wav = tmp_path / "opening.wav"
+    interruption_wav = tmp_path / "interruption.wav"
+    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=1.0)
+    _write_mono_wav(interruption_wav, silence_seconds=0.2, speech_seconds=0.6)
+
+    raw_audio_path = tmp_path / "rollout-0.opus"
+    _write_opus_fixture(raw_audio_path, seconds=2.0, amplitude=0.2)
+
+    rollout = Rollout(
+        transcript="Go on, then.",
+        yield_delay_reward=-0.3,
+        quality_reward=0.8,
+        delay_seconds=None,
+        raw_audio_path=raw_audio_path,
+        barge_in_seconds=1.0,
+        first_output_received_seconds=0.1,
+        last_output_received_seconds=2.1,
+        post_barge_text_frames=[(1.0, "Go on, then.")],
+        output_frames=[(round(i * 0.04, 6), 0.1) for i in range(50)],
+    )
+    output_directory = tmp_path / "corpus"
+
+    with pytest.raises(ValueError, match="delay_seconds is None"):
+        build_self_distillation_example(
+            rollout,
+            scenario_id="aragorn-lore-rangers",
+            character="aragorn",
+            opening_wav_path=opening_wav,
+            interruption_wav_path=interruption_wav,
+            system_prompt="<system>You are Aragorn.<system>",
+            split=Split.TRAIN,
+            output_directory=output_directory,
+        )
+
+
 def test_build_self_distillation_example_aligns_words_by_direct_offset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
