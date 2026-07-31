@@ -149,6 +149,17 @@ def _write_v6_source_dataset(root: Path) -> None:
     }
     (root / "dialogues.jsonl").write_text(json.dumps(blueprint) + "\n")
     (root / "audio" / "aragorn-existing-001.wav").write_bytes(b"fake-wav-bytes")
+    # Real v6 audio JSON is already conditioned (annotated with
+    # system_prompt/blueprint_hash) from prior real training runs.
+    (root / "audio" / "aragorn-existing-001.json").write_text(
+        json.dumps(
+            {
+                "alignments": [["Well", [0.0, 0.1], "SPEAKER_MAIN"], ["met.", [0.1, 0.2], "SPEAKER_MAIN"]],
+                "system_prompt": "<system>You are Aragorn.<system>",
+                "blueprint_hash": "b" * 64,
+            }
+        )
+    )
     train_row = {"path": str((root / "audio" / "aragorn-existing-001.wav").resolve()), "duration": 3.0}
     (root / "manifests" / "train.jsonl").write_text(json.dumps(train_row) + "\n")
     validation_row = {"path": str((root / "audio" / "aragorn-existing-001.wav").resolve()), "duration": 3.0}
@@ -258,9 +269,7 @@ def test_build_derived_dataset_merges_without_touching_the_source(tmp_path: Path
     self_distill_row = next(
         row for row in derived_train_rows if "self-distill" in row["path"]
     )
-    assert Path(self_distill_row["path"]).parent == (
-        output_directory / "self_distillation_audio"
-    ).resolve()
+    assert Path(self_distill_row["path"]).parent == (output_directory / "audio").resolve()
     assert Path(self_distill_row["path"]).is_file()
     v6_row = next(row for row in derived_train_rows if "self-distill" not in row["path"])
     assert Path(v6_row["path"]) == (v6_source / "audio" / "aragorn-existing-001.wav").resolve()
@@ -276,6 +285,14 @@ def test_build_derived_dataset_merges_without_touching_the_source(tmp_path: Path
     assert copied_alignment["blueprint_hash"] == DialogueBlueprint.model_validate(
         new_blueprint
     ).canonical_hash
+
+    # v6's own audio+json is also copied into the unified audio/ directory
+    # (never mutating v6_source_dataset) -- conditioning.py's
+    # annotate_system_prompts looks up every blueprint's alignment JSON as
+    # audio_directory/f"{id}.json" in one flat directory, so the derived
+    # dataset needs v6's own entries there too, not just the new ones.
+    assert (output_directory / "audio" / "aragorn-existing-001.wav").is_file()
+    assert (output_directory / "audio" / "aragorn-existing-001.json").is_file()
 
 
 def test_build_derived_dataset_raises_on_missing_v6_source_file(tmp_path: Path) -> None:

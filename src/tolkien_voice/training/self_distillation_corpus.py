@@ -141,11 +141,17 @@ def build_derived_dataset(
 
     output_directory/manifests/train.jsonl = v6's train.jsonl rows,
     completely unchanged (still pointing at v6_source_dataset's own
-    audio -- that data isn't moving), plus the self-distillation
-    corpus's rows, with paths rewritten to point at
-    output_directory/self_distillation_audio (the only audio this
-    function actually copies -- v6's existing audio is left in place
-    and referenced from its original location, not duplicated).
+    audio for actual training data loading -- that data isn't moving),
+    plus the self-distillation corpus's rows, with paths rewritten to
+    point at output_directory/audio.
+
+    output_directory/audio = a copy of v6_source_dataset's own audio
+    contents plus the self-distillation corpus's WAV+JSON pairs, unified
+    into one flat directory addressable by blueprint id. This exists
+    because tolkien_voice.training.conditioning.annotate_system_prompts
+    looks up every blueprint's alignment JSON as
+    audio_directory/f"{id}.json" in a single directory, never consulting
+    a manifest path -- v6_source_dataset itself is still never written to.
 
     output_directory/manifests/validation.jsonl = copied byte-for-byte
     from v6_source_dataset -- self-distillation examples are never
@@ -158,8 +164,22 @@ def build_derived_dataset(
 
     output_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     (output_directory / "manifests").mkdir(exist_ok=True, mode=0o700)
-    audio_output_directory = output_directory / "self_distillation_audio"
+    audio_output_directory = output_directory / "audio"
     audio_output_directory.mkdir(exist_ok=True, mode=0o700)
+
+    # tolkien_voice.training.conditioning.annotate_system_prompts looks up
+    # every blueprint's alignment JSON as audio_directory / f"{id}.json" in a
+    # single flat directory -- it never consults the train/validation
+    # manifest's own path field. v6's own audio+json is copied in here too
+    # (never mutating v6_source_dataset itself) so the derived dataset has one
+    # unified audio/ directory usable the same way train-mvp-v6-persona.sh
+    # already uses v6's own "$source_dataset/audio". train.jsonl's v6 rows
+    # keep pointing at v6_source_dataset's original audio location below --
+    # that's what training itself actually reads; this copy exists only so
+    # conditioning has a single directory covering every blueprint id.
+    for source_file in (v6_source_dataset / "audio").iterdir():
+        if source_file.is_file():
+            shutil.copy2(source_file, audio_output_directory / source_file.name)
 
     probes_manifest = load_persona_manifest(probes_manifest_path)
 
