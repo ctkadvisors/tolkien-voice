@@ -185,7 +185,7 @@ def validate_substantive_corpus(
                 f"{character} requires at least {minimum_per_character} dialogues; got {len(selected)}"
             )
         categories = {item.curriculum.value for item in selected}
-        if categories != CURRICULUM_CATEGORIES:
+        if not CURRICULUM_CATEGORIES.issubset(categories):
             missing = sorted(CURRICULUM_CATEGORIES - categories)
             raise ValueError(f"{character} curriculum is incomplete: missing {', '.join(missing)}")
         timing = {item.timing for item in selected}
@@ -197,7 +197,7 @@ def validate_substantive_corpus(
         if validation_count < max(1, len(selected) // 10):
             raise ValueError(f"{character} requires at least 10% validation dialogues")
         training_categories = {item.curriculum.value for item in training}
-        if training_categories != CURRICULUM_CATEGORIES:
+        if not CURRICULUM_CATEGORIES.issubset(training_categories):
             missing = sorted(CURRICULUM_CATEGORIES - training_categories)
             raise ValueError(
                 f"{character} training curriculum is incomplete: missing {', '.join(missing)}"

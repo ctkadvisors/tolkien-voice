@@ -15,6 +15,7 @@ from tolkien_voice.training.generate import (
     write_blueprints_atomic,
 )
 from tolkien_voice.training.schema import (
+    CurriculumKind,
     DialogueBlueprint,
     Provenance,
     Split,
@@ -150,6 +151,54 @@ def test_substantive_corpus_requires_balance_diversity_and_unique_dialogues() ->
             [*items, items[0].model_copy(update={"id": "aragorn-copy-9999"})],
             minimum_per_character=64,
         )
+
+
+def test_substantive_corpus_tolerates_extra_curriculum_categories_beyond_the_required_set() -> None:
+    # Self-distillation examples (tolkien_voice.training.self_distillation_corpus)
+    # map some probes to CurriculumKind.GENERAL, a category outside
+    # CURRICULUM_CATEGORIES -- a corpus that has ALL required categories plus
+    # some extra ones (added only to train, never validation) must still pass,
+    # since coverage is about presence of the required set, not exclusivity.
+    items: list[DialogueBlueprint] = []
+    for character in ("aragorn", "sauron"):
+        for index in range(64):
+            scenario = build_curriculum_scenario(character, index)
+            base = sample_blueprint()
+            items.append(
+                base.model_copy(
+                    update={
+                        "id": f"{character}-{index:04d}",
+                        "character": character,
+                        "scenario": scenario.text,
+                        "curriculum": scenario.category,
+                        "timing": scheduled_timing(index),
+                        "split": scheduled_split(scenario.category.value, index),
+                        "utterances": [
+                            Utterance(speaker="user", text=f"Question {character} {index}?"),
+                            Utterance(
+                                speaker="assistant",
+                                text=f"Answer in the manner of {character}, example {index}.",
+                            ),
+                        ],
+                    }
+                )
+            )
+    extra = sample_blueprint().model_copy(
+        update={
+            "id": "aragorn-self-distill-extra-0001",
+            "character": "aragorn",
+            "scenario": "A self-distillation scenario outside the curriculum set.",
+            "curriculum": CurriculumKind.GENERAL,
+            "timing": TimingKind.INTERRUPTION,
+            "split": Split.TRAIN,
+            "utterances": [
+                Utterance(speaker="user", text="Tell me briefly."),
+                Utterance(speaker="assistant", text="Briefly: yes."),
+            ],
+        }
+    )
+
+    validate_substantive_corpus([*items, extra], minimum_per_character=64)
 
 
 def test_generated_corpus_breaks_curriculum_timing_alias_and_spreads_validation() -> None:
