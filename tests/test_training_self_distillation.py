@@ -16,32 +16,6 @@ from tolkien_voice.training.self_distillation import (
     leading_silence_seconds,
     select_best_rollout,
 )
-from tolkien_voice.training.self_distillation import _rescale_to_placed_span
-
-
-def test_rescale_to_placed_span_maps_endpoints_and_interpolates() -> None:
-    kwargs = dict(
-        first_output_received_seconds=2.0,
-        wall_clock_span=10.0,
-        assistant_start_sec=1.0,
-        decoded_duration=5.0,
-    )
-
-    assert _rescale_to_placed_span(2.0, **kwargs) == pytest.approx(1.0)
-    assert _rescale_to_placed_span(12.0, **kwargs) == pytest.approx(6.0)
-    assert _rescale_to_placed_span(7.0, **kwargs) == pytest.approx(3.5)
-
-
-def test_rescale_to_placed_span_returns_start_when_span_is_zero() -> None:
-    result = _rescale_to_placed_span(
-        5.0,
-        first_output_received_seconds=5.0,
-        wall_clock_span=0.0,
-        assistant_start_sec=2.0,
-        decoded_duration=3.0,
-    )
-
-    assert result == 2.0
 
 
 def _assert_close(
@@ -56,8 +30,8 @@ def _assert_close(
     # abs-difference comparisons are used here instead.
     actual_start, actual_end = actual
     expected_start, expected_end = expected
-    assert abs(actual_start - expected_start) <= abs_tol, (actual, expected)
-    assert abs(actual_end - expected_end) <= abs_tol, (actual, expected)
+    assert abs(actual_start - expected_start) <= abs_tol
+    assert abs(actual_end - expected_end) <= abs_tol
 
 
 def _rollout(
@@ -344,7 +318,10 @@ def test_build_self_distillation_example_produces_a_valid_rendered_example(
     _write_mono_wav(interruption_wav, silence_seconds=0.2, speech_seconds=0.6)
 
     raw_audio_path = tmp_path / "rollout-0.opus"
-    _write_opus_fixture(raw_audio_path, seconds=1.0, amplitude=0.2)
+    # 2.0s decoded -- long enough that barge-in (at raw t=1.0, well within
+    # the first 40ms-frame-quantized second) plus a 0.3s extraction has
+    # real content to extract.
+    _write_opus_fixture(raw_audio_path, seconds=2.0, amplitude=0.2)
 
     rollout = Rollout(
         transcript="Go on, then.",
@@ -354,16 +331,10 @@ def test_build_self_distillation_example_produces_a_valid_rendered_example(
         raw_audio_path=raw_audio_path,
         barge_in_seconds=1.0,
         first_output_received_seconds=0.1,
-        # The fixture decodes to exactly 1.0s of audio (24_000 samples at
-        # 24kHz), so a wall-clock span of exactly 1.0s is fully consistent
-        # with the decoded duration and the timing-consistency guard in
-        # build_self_distillation_example should not fire.
-        last_output_received_seconds=1.1,
-        post_barge_text_frames=[(0.1, "Go on, then.")],
-        # Real audible output for the full decoded span, so the real-speech-end
-        # bound (fixed for the last-chunk case) lands at the same place the
-        # old assistant_end_sec bound did for this fixture.
-        output_frames=[(0.1, 0.2), (1.1, 0.2)],
+        last_output_received_seconds=2.1,
+        post_barge_text_frames=[(1.0, "Go on, then.")],
+        # 25 frames (0.0 to 0.96s in 0.04s steps) before barge_in=1.0.
+        output_frames=[(round(i * 0.04, 6), 0.1) for i in range(50)],
     )
     output_directory = tmp_path / "corpus"
 
@@ -388,165 +359,41 @@ def test_build_self_distillation_example_produces_a_valid_rendered_example(
     assert len(payload["alignments"]) >= 1
 
 
-def test_build_self_distillation_example_raises_on_channel_clip(
+def test_build_self_distillation_example_interruption_never_overlaps_opening(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Tests that build_self_distillation_example raises ValueError when mixed
-    samples exceed MAX_SAFE_SAMPLE, matching the behavior in render.py."""
-    _install_fake_audio_modules(monkeypatch)
-
-    opening_wav = tmp_path / "opening.wav"
-    interruption_wav = tmp_path / "interruption.wav"
-
-    # Write high-amplitude WAV files that will exceed MAX_SAFE_SAMPLE when mixed.
-    # MAX_SAFE_SAMPLE = int(32_767 * 0.99) = 32438
-    sample_rate = 24_000
-
-    # opening: 1.0 second of amplitude 20000
-    opening_samples = array("h")
-    opening_samples.extend([20000] * round(1.0 * sample_rate))
-    with wave.open(str(opening_wav), "wb") as output:
-        output.setnchannels(1)
-        output.setsampwidth(2)
-        output.setframerate(sample_rate)
-        output.writeframes(opening_samples.tobytes())
-
-    # interruption: 0.2 seconds silence + 0.6 seconds at amplitude 15000
-    # This overlaps with the opening on the right channel and will exceed the limit.
-    interruption_samples = array("h")
-    interruption_samples.extend([0] * round(0.2 * sample_rate))
-    interruption_samples.extend([15000] * round(0.6 * sample_rate))
-    with wave.open(str(interruption_wav), "wb") as output:
-        output.setnchannels(1)
-        output.setsampwidth(2)
-        output.setframerate(sample_rate)
-        output.writeframes(interruption_samples.tobytes())
-
-    raw_audio_path = tmp_path / "rollout-0.opus"
-    _write_opus_fixture(raw_audio_path, seconds=1.0, amplitude=0.05)
-
-    rollout = Rollout(
-        transcript="Go on, then.",
-        yield_delay_reward=-0.3,
-        quality_reward=0.8,
-        delay_seconds=0.3,
-        raw_audio_path=raw_audio_path,
-        barge_in_seconds=0.3,  # Position interruption to overlap with opening
-        first_output_received_seconds=0.1,
-        # Consistent with the 1.0s-decoded fixture so the timing-consistency
-        # guard doesn't preempt the clip check this test targets.
-        last_output_received_seconds=1.1,
-        post_barge_text_frames=[(0.1, "Go on, then.")],
-        output_frames=[(0.1, 0.2), (1.1, 0.2)],
-    )
-    output_directory = tmp_path / "corpus"
-
-    with pytest.raises(ValueError, match="clipped") as excinfo:
-        build_self_distillation_example(
-            rollout,
-            scenario_id="aragorn-lore-rangers",
-            character="aragorn",
-            opening_wav_path=opening_wav,
-            interruption_wav_path=interruption_wav,
-            system_prompt="<system>You are Aragorn.<system>",
-            split=Split.TRAIN,
-            output_directory=output_directory,
-        )
-    assert "aragorn-lore-rangers" in str(excinfo.value)
-
-
-def test_build_self_distillation_example_tolerates_sub_realtime_generation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The exact shape of drift observed live on Spark (2026-07-30): audio
-    genuinely decodes to less playback duration than the wall-clock time it
-    took to arrive, because PersonaPlex generated it slower than real-time
-    on that hardware (~1.4x observed) -- not because of corpus-corrupting
-    timing drift. The old absolute-tolerance guard rejected every live
-    example with this shape; this test proves the new guard does not.
+    """The concrete case the whole-branch review found broken in the prior
+    (rescale-based) design: a long opening plus a plausible delay_seconds
+    could pull the interruption's audible onset earlier than the opening's
+    own end, overlapping two different user utterances on one channel with
+    no error raised. The new design's max(opening_end_sec, barge_in_seconds)
+    placement must never do this, regardless of delay_seconds.
     """
     _install_fake_audio_modules(monkeypatch)
 
     opening_wav = tmp_path / "opening.wav"
     interruption_wav = tmp_path / "interruption.wav"
-    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=1.0)
-    _write_mono_wav(interruption_wav, silence_seconds=0.2, speech_seconds=0.6)
-
-    raw_audio_path = tmp_path / "rollout-0.opus"
-    # Decodes to 10.0s -- deliberately much less than the 14.0s wall-clock
-    # span below, reproducing the live ~1.4x sub-realtime ratio observed on
-    # Spark (18.66-18.68s wall-clock for 13.36s decoded in two live runs).
-    _write_opus_fixture(raw_audio_path, seconds=10.0, amplitude=0.1)
-
-    rollout = Rollout(
-        transcript="Go on, then.",
-        yield_delay_reward=-0.3,
-        quality_reward=0.8,
-        delay_seconds=0.3,
-        raw_audio_path=raw_audio_path,
-        barge_in_seconds=1.0,
-        first_output_received_seconds=0.5,
-        last_output_received_seconds=14.5,
-        post_barge_text_frames=[(3.0, "Go on, then.")],
-        output_frames=[(0.5, 0.1), (5.0, 0.1), (9.0, 0.1)],
-    )
-    output_directory = tmp_path / "corpus"
-
-    example = build_self_distillation_example(
-        rollout,
-        scenario_id="aragorn-lore-rangers",
-        character="aragorn",
-        opening_wav_path=opening_wav,
-        interruption_wav_path=interruption_wav,
-        system_prompt="<system>You are Aragorn.<system>",
-        split=Split.TRAIN,
-        output_directory=output_directory,
-    )
-
-    assert example.wav_path.is_file()
-
-
-def test_build_self_distillation_example_places_interruption_relative_to_real_yield(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The interruption's audible onset in the reconstructed WAV must land
-    delay_seconds before the assistant's real (rescaled) speech end -- not
-    at a raw barge_in_seconds, which can place the interruption after the
-    assistant's compressed audio has already gone quiet under sub-realtime
-    generation, teaching the model to yield before an interruption it
-    hasn't heard yet. See the design spec's "Correction" section.
-    """
-    _install_fake_audio_modules(monkeypatch)
-
-    opening_wav = tmp_path / "opening.wav"
-    interruption_wav = tmp_path / "interruption.wav"
-    # Short opening (0.1s) so it can never overlap the interruption, which
-    # this scenario places around t=5.5s.
-    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=0.1)
-    # Silence prefix is an exact multiple of FRAME_SECONDS (0.04s * 2 =
-    # 0.08s) so leading_silence_seconds returns exactly 0.08, avoiding
-    # frame-quantization ambiguity in this test's expected value.
+    # 4.5s opening, matching the whole-branch review's own reproduction.
+    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=4.5)
     _write_mono_wav(interruption_wav, silence_seconds=0.08, speech_seconds=0.6)
 
     raw_audio_path = tmp_path / "rollout-0.opus"
-    # Same 5/7 compression ratio as
-    # test_build_self_distillation_example_tolerates_sub_realtime_generation
-    # (decoded 10.0s over a 14.0s wall-clock span).
-    _write_opus_fixture(raw_audio_path, seconds=10.0, amplitude=0.1)
+    _write_opus_fixture(raw_audio_path, seconds=6.0, amplitude=0.1)
 
     rollout = Rollout(
         transcript="Go on, then.",
-        yield_delay_reward=-1.0,
+        yield_delay_reward=-0.3,
         quality_reward=0.8,
-        delay_seconds=1.0,
+        # A large delay_seconds is exactly what pulled the interruption
+        # earlier than the opening's end under the old rescale-based
+        # formula -- the new formula must not be sensitive to this at all.
+        delay_seconds=3.0,
         raw_audio_path=raw_audio_path,
-        barge_in_seconds=6.0,
-        first_output_received_seconds=0.5,
-        last_output_received_seconds=14.5,
-        post_barge_text_frames=[(9.5, "Go on, then.")],
-        # Last active frame at raw t=9.0 -- rescales to
-        # 0.5 + (9.0 - 0.5) * (10.0 / 14.0) = 46/7 (~6.571s).
-        output_frames=[(0.5, 0.1), (5.0, 0.1), (9.0, 0.1)],
+        barge_in_seconds=4.9,  # shortly after the 4.5s opening ends
+        first_output_received_seconds=0.1,
+        last_output_received_seconds=6.1,
+        post_barge_text_frames=[(4.9, "Go on, then.")],
+        output_frames=[(round(i * 0.04, 6), 0.1) for i in range(150)],
     )
     output_directory = tmp_path / "corpus"
 
@@ -560,42 +407,22 @@ def test_build_self_distillation_example_places_interruption_relative_to_real_yi
         split=Split.TRAIN,
         output_directory=output_directory,
     )
-
-    # real_speech_end_sec (rescaled) = 46/7. The interruption's own silence
-    # prefix (onset_offset) exactly cancels out of the audible-onset
-    # position: interruption_start_sec = (46/7 - delay_seconds) -
-    # onset_offset, and the loud content starts onset_offset into the
-    # clip, so audible onset = 46/7 - delay_seconds regardless of
-    # onset_offset's value.
-    expected_audible_onset_sec = 46 / 7 - 1.0  # ~5.571428571
-    assistant_end_sec = 0.5 + 10.0  # assistant_start_sec + decoded_duration
 
     with wave.open(str(example.wav_path), "rb") as source:
         sample_rate = source.getframerate()
         interleaved = array("h")
         interleaved.frombytes(source.readframes(source.getnframes()))
-    right_channel = interleaved[1::2]  # user/interruption channel
+    right_channel = interleaved[1::2]
 
-    def _right_channel_rms(start_sec: float, duration_sec: float) -> float:
-        start = round(start_sec * sample_rate)
-        end = round((start_sec + duration_sec) * sample_rate)
-        window = right_channel[max(0, start) : max(0, end)]
-        if not window:
-            return 0.0
-        return (sum(sample * sample for sample in window) / len(window)) ** 0.5
-
-    # Silent just before the expected onset -- the interruption has not
-    # started yet, and the short opening ended long ago.
-    assert _right_channel_rms(expected_audible_onset_sec - 0.5, 0.3) < 100
-    # Audible at and after the expected onset.
-    assert _right_channel_rms(expected_audible_onset_sec + 0.05, 0.3) > 1000
-    # The interruption's onset lands comfortably before the assistant's
-    # placed audio ends -- the concrete failure mode this correction fixes
-    # (the pre-correction code could place it after this point).
-    assert expected_audible_onset_sec < assistant_end_sec
+    opening_end_sample = round(4.5 * sample_rate)
+    # Every sample up to and including the opening's own end must be
+    # exactly the opening's own content (amplitude 5000, from
+    # _write_mono_wav) -- nothing from the interruption clip has bled in
+    # before the opening finished.
+    assert all(sample == 5000 for sample in right_channel[: opening_end_sample - 1])
 
 
-def test_build_self_distillation_example_raises_on_empty_decoded_audio(
+def test_build_self_distillation_example_raises_when_decoded_audio_does_not_reach_barge_in(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_fake_audio_modules(monkeypatch)
@@ -606,47 +433,11 @@ def test_build_self_distillation_example_raises_on_empty_decoded_audio(
     _write_mono_wav(interruption_wav, silence_seconds=0.2, speech_seconds=0.6)
 
     raw_audio_path = tmp_path / "rollout-0.opus"
-    raw_audio_path.write_bytes(b"")  # empty Opus stream decodes to zero samples
-
-    rollout = Rollout(
-        transcript="",
-        yield_delay_reward=-0.3,
-        quality_reward=0.8,
-        delay_seconds=0.3,
-        raw_audio_path=raw_audio_path,
-        barge_in_seconds=1.0,
-        first_output_received_seconds=0.5,
-        last_output_received_seconds=0.5,
-        post_barge_text_frames=[],
-        output_frames=[],
-    )
-    output_directory = tmp_path / "corpus"
-
-    with pytest.raises(ValueError, match="decoded to no samples"):
-        build_self_distillation_example(
-            rollout,
-            scenario_id="aragorn-lore-rangers",
-            character="aragorn",
-            opening_wav_path=opening_wav,
-            interruption_wav_path=interruption_wav,
-            system_prompt="<system>You are Aragorn.<system>",
-            split=Split.TRAIN,
-            output_directory=output_directory,
-        )
-
-
-def test_build_self_distillation_example_raises_on_out_of_order_timestamps(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _install_fake_audio_modules(monkeypatch)
-
-    opening_wav = tmp_path / "opening.wav"
-    interruption_wav = tmp_path / "interruption.wav"
-    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=1.0)
-    _write_mono_wav(interruption_wav, silence_seconds=0.2, speech_seconds=0.6)
-
-    raw_audio_path = tmp_path / "rollout-0.opus"
-    _write_opus_fixture(raw_audio_path, seconds=1.0, amplitude=0.1)
+    # Only 0.2s of decoded audio (4800 samples at 24kHz), but barge-in is
+    # claimed at 5.0s with 10 output_frames entries all before it -- 10
+    # frames * 960 samples/frame = 9600, which exceeds the 4800-sample
+    # decoded buffer, so extraction_start lands past its end.
+    _write_opus_fixture(raw_audio_path, seconds=0.2, amplitude=0.1)
 
     rollout = Rollout(
         transcript="Go on, then.",
@@ -654,15 +445,15 @@ def test_build_self_distillation_example_raises_on_out_of_order_timestamps(
         quality_reward=0.8,
         delay_seconds=0.3,
         raw_audio_path=raw_audio_path,
-        barge_in_seconds=1.0,
-        first_output_received_seconds=5.0,
-        last_output_received_seconds=1.0,  # before first_output -- impossible
-        post_barge_text_frames=[(3.0, "Go on, then.")],
-        output_frames=[(5.0, 0.1)],
+        barge_in_seconds=5.0,
+        first_output_received_seconds=0.1,
+        last_output_received_seconds=0.3,
+        post_barge_text_frames=[],
+        output_frames=[(round(i * 0.04, 6), 0.1) for i in range(10)],
     )
     output_directory = tmp_path / "corpus"
 
-    with pytest.raises(ValueError, match="out of order"):
+    with pytest.raises(ValueError, match="does not extend to barge-in"):
         build_self_distillation_example(
             rollout,
             scenario_id="aragorn-lore-rangers",
@@ -675,60 +466,105 @@ def test_build_self_distillation_example_raises_on_out_of_order_timestamps(
         )
 
 
-def test_build_self_distillation_example_aligns_words_to_real_chunk_timestamps(
+def test_build_self_distillation_example_places_assistant_segment_at_interruption_onset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Word alignments must come from each post_barge_text_frames chunk's own
-    real timestamp, not from spreading the whole transcript uniformly across
-    the entire captured-audio span (first_output_received_seconds to
-    assistant_end_sec), which spans the model's pre-barge continuation plus
-    a trailing silence window well beyond where these words were actually
-    spoken. This is a regression test for that bug -- specifically the
-    interior-chunk case, where a chunk is bounded by the *next* chunk's real
-    timestamp (already correct before this test was tightened).
-
-    Bounds are exact (not a wide window): with output_frames active across
-    the whole decoded span, the interior chunk's [0.5, 3.0) window and
-    _word_alignments' own uniform-spacing-within-a-chunk formula fully
-    determine each word's start/end, so this test can assert precise values
-    instead of a multi-second range that both the buggy and fixed
-    implementations would satisfy.
+    """The assistant's extracted post-barge segment must start exactly at
+    the interruption's own audible onset -- physically: this is what the
+    model said starting when the user interrupted.
     """
     _install_fake_audio_modules(monkeypatch)
 
     opening_wav = tmp_path / "opening.wav"
     interruption_wav = tmp_path / "interruption.wav"
     _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=1.0)
-    _write_mono_wav(interruption_wav, silence_seconds=0.2, speech_seconds=0.6)
+    # Silence prefix is an exact multiple of FRAME_SECONDS (0.04s * 2 =
+    # 0.08s) so leading_silence_seconds returns exactly 0.08.
+    _write_mono_wav(interruption_wav, silence_seconds=0.08, speech_seconds=0.6)
 
     raw_audio_path = tmp_path / "rollout-0.opus"
-    # 15s of captured assistant audio -- typical of a session that includes
-    # a pre-barge continuation, the post-barge yield, and a trailing
-    # response_seconds silence window.
-    _write_opus_fixture(raw_audio_path, seconds=15.0, amplitude=0.1)
+    _write_opus_fixture(raw_audio_path, seconds=2.0, amplitude=0.2)
 
     rollout = Rollout(
-        transcript="First chunk words here. Second chunk words here.",
+        transcript="Go on, then.",
         yield_delay_reward=-0.3,
         quality_reward=0.8,
-        delay_seconds=0.3,
+        delay_seconds=0.5,
         raw_audio_path=raw_audio_path,
-        barge_in_seconds=1.0,
-        first_output_received_seconds=0.5,
-        # wall_clock_span (22.5) is 1.5x decoded_duration (15.0) -- the same
-        # direction and a similar magnitude to the ~1.4x sub-realtime ratio
-        # observed live on Spark (2026-07-30), so this test exercises the
-        # rescale path instead of degenerating to an identity mapping.
-        last_output_received_seconds=23.0,
+        barge_in_seconds=1.5,
+        first_output_received_seconds=0.1,
+        last_output_received_seconds=2.1,
+        post_barge_text_frames=[(1.5, "Go on, then.")],
+        output_frames=[(round(i * 0.04, 6), 0.1) for i in range(50)],
+    )
+    output_directory = tmp_path / "corpus"
+
+    example = build_self_distillation_example(
+        rollout,
+        scenario_id="aragorn-lore-rangers",
+        character="aragorn",
+        opening_wav_path=opening_wav,
+        interruption_wav_path=interruption_wav,
+        system_prompt="<system>You are Aragorn.<system>",
+        split=Split.TRAIN,
+        output_directory=output_directory,
+    )
+
+    # interruption_start_sec = max(1.0, 1.5) - 0.08 = 1.42
+    # audible onset = interruption_start_sec + onset_offset = 1.5
+    # assistant_start_sec = 1.5 (shares the interruption's own onset)
+    expected_onset_sec = 1.5
+
+    with wave.open(str(example.wav_path), "rb") as source:
+        sample_rate = source.getframerate()
+        interleaved = array("h")
+        interleaved.frombytes(source.readframes(source.getnframes()))
+    left_channel = interleaved[0::2]  # assistant channel
+
+    def _left_channel_rms(start_sec: float, duration_sec: float) -> float:
+        start = round(start_sec * sample_rate)
+        end = round((start_sec + duration_sec) * sample_rate)
+        window = left_channel[max(0, start) : max(0, end)]
+        if not window:
+            return 0.0
+        return (sum(sample * sample for sample in window) / len(window)) ** 0.5
+
+    assert _left_channel_rms(expected_onset_sec - 0.3, 0.2) < 100
+    assert _left_channel_rms(expected_onset_sec + 0.05, 0.2) > 1000
+
+
+def test_build_self_distillation_example_aligns_words_by_direct_offset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Alignment timestamps are a direct offset translation from
+    barge_in_seconds onto the assistant segment's placed position -- no
+    compression factor, since the extracted segment plays at its own
+    natural (unscaled) pace.
+    """
+    _install_fake_audio_modules(monkeypatch)
+
+    opening_wav = tmp_path / "opening.wav"
+    interruption_wav = tmp_path / "interruption.wav"
+    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=1.0)
+    _write_mono_wav(interruption_wav, silence_seconds=0.08, speech_seconds=0.6)
+
+    raw_audio_path = tmp_path / "rollout-0.opus"
+    _write_opus_fixture(raw_audio_path, seconds=3.0, amplitude=0.2)
+
+    rollout = Rollout(
+        transcript="First words. Second words.",
+        yield_delay_reward=-0.3,
+        quality_reward=0.8,
+        delay_seconds=1.0,
+        raw_audio_path=raw_audio_path,
+        barge_in_seconds=1.5,
+        first_output_received_seconds=0.1,
+        last_output_received_seconds=3.1,
         post_barge_text_frames=[
-            (0.5, "First chunk words here. "),
-            (3.0, "Second chunk words here."),
+            (1.5, "First words. "),
+            (1.9, "Second words."),
         ],
-        # Real audible output for the entire decoded span, matching the new
-        # last_output_received_seconds so the last active frame rescales to
-        # exactly assistant_end_sec -- this test is about the interior-chunk
-        # bound, not the last-chunk fix (see the dedicated test below).
-        output_frames=[(0.5, 0.1), (23.0, 0.1)],
+        output_frames=[(round(i * 0.04, 6), 0.1) for i in range(75)],
     )
     output_directory = tmp_path / "corpus"
 
@@ -745,119 +581,18 @@ def test_build_self_distillation_example_aligns_words_to_real_chunk_timestamps(
 
     validate_rendered_examples([example])
     payload = json.loads(example.alignment_path.read_text())
-    # Indexed by position, not by a word-text-keyed dict: "chunk", "words",
-    # and "here" each appear once per chunk, so a text-keyed lookup would
-    # silently collapse the two chunks' distinct timings onto one entry.
     words = [(word, tuple(span)) for word, span, _ in payload["alignments"]]
-    assert [word for word, _ in words] == [
-        "First", "chunk", "words", "here", "Second", "chunk", "words", "here",
-    ]
+    # _word_alignments (unchanged by this plan) strips trailing punctuation
+    # via word.strip(string.punctuation), so "words." tokenizes to "words".
+    assert [word for word, _ in words] == ["First", "words", "Second", "words"]
 
-    # Rescale factor: decoded_duration (15.0) / wall_clock_span (22.5) = 2/3.
-    # Interior chunk: "First chunk words here." spaced uniformly across
-    # [rescale(0.5), rescale(3.0)) = [0.5, 0.5 + 5/3) -- 4 words.
-    _assert_close(words[0][1], (0.5, 0.5 + 5 / 12), abs_tol=1e-4)
-    _assert_close(words[1][1], (0.5 + 5 / 12, 0.5 + 10 / 12), abs_tol=1e-4)
-    _assert_close(words[2][1], (0.5 + 10 / 12, 0.5 + 15 / 12), abs_tol=1e-4)
-    _assert_close(words[3][1], (0.5 + 15 / 12, 0.5 + 5 / 3), abs_tol=1e-4)
-
-    # Last chunk: "Second chunk words here." spaced uniformly across
-    # [rescale(3.0), rescale(23.0)) = [0.5 + 5/3, 15.5) -- 4 words.
-    _assert_close(words[4][1], (0.5 + 5 / 3, 5.5), abs_tol=1e-4)
-
-
-def test_build_self_distillation_example_bounds_last_chunk_by_real_speech_end(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The *last* post_barge_text_frames chunk must be bounded by the real
-    end of audible assistant speech (derived from rollout.output_frames),
-    not by assistant_end_sec -- the end of the entire captured assistant
-    audio, which includes a trailing response_seconds window (12.0s by
-    default) of mostly silence after the assistant actually stops talking.
-
-    This is the concrete case the whole-branch review identified as still
-    broken by commit b90ee96 (which only fixed *interior* chunk bounds):
-    a single/last chunk arrives at t=3.0s, but the assistant's real speech
-    (per output_frames) ends at t=4.0s, while the full captured audio spans
-    all the way to t=15.5s (0.5s pre-roll + 15.0s decoded audio). The old
-    `end_sec=assistant_end_sec` behavior would spread this chunk's words
-    across [3.0, 15.5) -- ending near 15.5, seconds after the assistant
-    stopped speaking. The fix must instead bound it to [3.0, 4.0).
-    """
-    _install_fake_audio_modules(monkeypatch)
-
-    opening_wav = tmp_path / "opening.wav"
-    interruption_wav = tmp_path / "interruption.wav"
-    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=1.0)
-    _write_mono_wav(interruption_wav, silence_seconds=0.2, speech_seconds=0.6)
-
-    raw_audio_path = tmp_path / "rollout-0.opus"
-    # 15s of captured assistant audio -- the assistant is only actually
-    # talking for the first ~3.5s of it (per output_frames below); the rest
-    # is the trailing response_seconds silence window.
-    _write_opus_fixture(raw_audio_path, seconds=15.0, amplitude=0.1)
-
-    rollout = Rollout(
-        transcript="Second chunk words here.",
-        yield_delay_reward=-0.3,
-        quality_reward=0.8,
-        delay_seconds=0.3,
-        raw_audio_path=raw_audio_path,
-        barge_in_seconds=1.0,
-        first_output_received_seconds=0.5,
-        # Same 1.5x wall_clock_span:decoded_duration ratio as the interior-
-        # chunk test above, so this test also exercises the rescale path.
-        last_output_received_seconds=23.0,
-        post_barge_text_frames=[(3.0, "Second chunk words here.")],
-        # Real audible output (rms above the 0.02 activity threshold) stops
-        # at raw wall-clock t=4.0; everything after that is quiet, all the
-        # way out to the new 23.0s end of the captured audio.
-        output_frames=[
-            (0.5, 0.1),
-            (1.0, 0.1),
-            (2.0, 0.1),
-            (3.0, 0.1),
-            (4.0, 0.1),
-            (4.5, 0.01),
-            (10.0, 0.01),
-            (23.0, 0.01),
-        ],
-    )
-    output_directory = tmp_path / "corpus"
-
-    example = build_self_distillation_example(
-        rollout,
-        scenario_id="aragorn-lore-rangers",
-        character="aragorn",
-        opening_wav_path=opening_wav,
-        interruption_wav_path=interruption_wav,
-        system_prompt="<system>You are Aragorn.<system>",
-        split=Split.TRAIN,
-        output_directory=output_directory,
-    )
-
-    validate_rendered_examples([example])
-    payload = json.loads(example.alignment_path.read_text())
-    words_by_text = {word: (start, end) for word, (start, end), _ in payload["alignments"]}
-
-    # Rescale factor: decoded_duration (15.0) / wall_clock_span (22.5) = 2/3.
-    # real_speech_end_sec = rescale(4.0) = 0.5 + 7/3 (the raw 4.0s last-active
-    # frame, rescaled); chunk start = rescale(3.0) = 0.5 + 5/3. Only chunk,
-    # bounded by [0.5 + 5/3, 0.5 + 7/3) -- 4 words, duration 2/3, 1/6 per word.
-    _assert_close(words_by_text["Second"], (0.5 + 5 / 3, 0.5 + 5 / 3 + 1 / 6), abs_tol=1e-4)
-    _assert_close(
-        words_by_text["chunk"], (0.5 + 5 / 3 + 1 / 6, 0.5 + 5 / 3 + 2 / 6), abs_tol=1e-4
-    )
-    _assert_close(
-        words_by_text["words"], (0.5 + 5 / 3 + 2 / 6, 0.5 + 5 / 3 + 3 / 6), abs_tol=1e-4
-    )
-    last_word_start, last_word_end = words_by_text["here"]
-    assert abs(last_word_start - (0.5 + 5 / 3 + 3 / 6)) <= 1e-4
-    assert abs(last_word_end - (0.5 + 7 / 3)) <= 1e-4
-    # The discriminating assertion: the pre-A1 behavior (bounding by
-    # assistant_end_sec=15.5, unrescaled) or the pre-this-fix behavior
-    # (bounding by the raw, un-rescaled real_speech_end=4.0) would both put
-    # this word's end far from 0.5 + 7/3 (~2.83s). This tight bound close to
-    # the true rescaled value, and far from either prior bug's output, is
-    # what makes this test catch a regression of either fix.
-    assert last_word_end < 5.0
+    # assistant_start_sec = max(1.0, 1.5) = 1.5 (shares interruption onset).
+    # Chunk 1 offset from barge_in (1.5): 1.5 - 1.5 = 0.0 -> placed at 1.5.
+    # Chunk 2 offset from barge_in: 1.9 - 1.5 = 0.4 -> placed at 1.9.
+    # Interior chunk 1 spans [1.5, 1.9) -- 2 words, 0.2s each.
+    _assert_close(words[0][1], (1.5, 1.7))
+    _assert_close(words[1][1], (1.7, 1.9))
+    # Last chunk spans [1.9, assistant_start_sec + delay_seconds) = [1.9, 2.5)
+    # -- 2 words, 0.3s each.
+    _assert_close(words[2][1], (1.9, 2.2))
+    _assert_close(words[3][1], (2.2, 2.5))
