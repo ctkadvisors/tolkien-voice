@@ -160,9 +160,13 @@ def _write_v6_source_dataset(root: Path) -> None:
             }
         )
     )
-    train_row = {"path": str((root / "audio" / "aragorn-existing-001.wav").resolve()), "duration": 3.0}
+    # Real v6 manifests store container-mount paths ("/data/datasets/...", the
+    # Docker --volume "$data_root:/data" mount point), not host-filesystem
+    # paths -- training reads these from inside the container.
+    container_wav_path = f"/data/datasets/{root.name}/audio/aragorn-existing-001.wav"
+    train_row = {"path": container_wav_path, "duration": 3.0}
     (root / "manifests" / "train.jsonl").write_text(json.dumps(train_row) + "\n")
-    validation_row = {"path": str((root / "audio" / "aragorn-existing-001.wav").resolve()), "duration": 3.0}
+    validation_row = {"path": container_wav_path, "duration": 3.0}
     (root / "manifests" / "validation.jsonl").write_text(json.dumps(validation_row) + "\n")
 
 
@@ -258,8 +262,11 @@ def test_build_derived_dataset_merges_without_touching_the_source(tmp_path: Path
     ).read_text() == original_v6_validation
 
     # Train manifest has both rows; the self-distillation row's path now
-    # points into the derived dataset's own copied audio, the v6 row's
-    # path is untouched (still pointing at the original v6 corpus).
+    # points into the derived dataset's own copied audio, written using the
+    # same "/data/datasets/..." container-mount convention as v6's own row
+    # (which is left completely untouched, still pointing at the original
+    # v6 corpus) -- training reads these paths from inside a Docker
+    # container that only has $data_root mounted at /data.
     derived_train_rows = [
         json.loads(line)
         for line in (output_directory / "manifests" / "train.jsonl").read_text().splitlines()
@@ -269,10 +276,13 @@ def test_build_derived_dataset_merges_without_touching_the_source(tmp_path: Path
     self_distill_row = next(
         row for row in derived_train_rows if "self-distill" in row["path"]
     )
-    assert Path(self_distill_row["path"]).parent == (output_directory / "audio").resolve()
-    assert Path(self_distill_row["path"]).is_file()
+    assert (
+        self_distill_row["path"]
+        == f"/data/datasets/{output_directory.name}/audio/aragorn-lore-rangers-self-distill.wav"
+    )
+    assert (output_directory / "audio" / "aragorn-lore-rangers-self-distill.wav").is_file()
     v6_row = next(row for row in derived_train_rows if "self-distill" not in row["path"])
-    assert Path(v6_row["path"]) == (v6_source / "audio" / "aragorn-existing-001.wav").resolve()
+    assert v6_row["path"] == f"/data/datasets/{v6_source.name}/audio/aragorn-existing-001.wav"
 
     # The copied alignment JSON must carry blueprint_hash matching the
     # synthesized blueprint's own canonical_hash -- conditioning.py's
@@ -280,7 +290,7 @@ def test_build_derived_dataset_merges_without_touching_the_source(tmp_path: Path
     # self-distillation pipeline never wrote this field itself since no
     # DialogueBlueprint existed yet at that stage.
     copied_alignment = json.loads(
-        Path(self_distill_row["path"]).with_suffix(".json").read_text()
+        (output_directory / "audio" / "aragorn-lore-rangers-self-distill.json").read_text()
     )
     assert copied_alignment["blueprint_hash"] == DialogueBlueprint.model_validate(
         new_blueprint
@@ -311,6 +321,42 @@ def test_build_derived_dataset_raises_on_missing_v6_source_file(tmp_path: Path) 
     from tolkien_voice.training.self_distillation_corpus import build_derived_dataset
 
     with pytest.raises(ValueError, match="dialogues.jsonl"):
+        build_derived_dataset(
+            v6_source_dataset=v6_source,
+            self_distillation_output=self_distillation_output,
+            probes_manifest_path=probes_path,
+            character_directory=character_dir,
+            teacher_revision="tolkien-voice/personaplex:3428dfd",
+            seed=20260730,
+            output_directory=tmp_path / "derived",
+        )
+
+
+def test_build_derived_dataset_raises_when_v6_manifest_path_convention_is_unrecognized(
+    tmp_path: Path,
+) -> None:
+    # If v6's own train.jsonl doesn't use the expected
+    # "/data/datasets/<v6-name>/audio/..." container-mount convention,
+    # _container_datasets_root can't derive a safe prefix -- raise loudly
+    # rather than silently writing a path that will fail inside the
+    # training container.
+    v6_source = tmp_path / "mvp-v6-decoupled"
+    _write_v6_source_dataset(v6_source)
+    (v6_source / "manifests" / "train.jsonl").write_text(
+        json.dumps({"path": "/some/unrelated/host/path/aragorn-existing-001.wav", "duration": 3.0})
+        + "\n"
+    )
+    self_distillation_output = tmp_path / "self-distill-output"
+    _write_self_distillation_output(self_distillation_output)
+    probes_path = tmp_path / "probes.yaml"
+    _write_probes_manifest(probes_path)
+    character_dir = tmp_path / "characters"
+    character_dir.mkdir()
+    (character_dir / "aragorn.yaml").write_text("id: aragorn\nname: Aragorn\n")
+
+    from tolkien_voice.training.self_distillation_corpus import build_derived_dataset
+
+    with pytest.raises(ValueError, match="container-path convention"):
         build_derived_dataset(
             v6_source_dataset=v6_source,
             self_distillation_output=self_distillation_output,

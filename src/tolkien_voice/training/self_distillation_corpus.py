@@ -121,6 +121,31 @@ def _find_probe(
     raise ValueError(f"probe {probe_id!r} not found in any character's probe list")
 
 
+def _container_datasets_root(v6_train_rows: list[dict[str, Any]], v6_source_dataset: Path) -> Path:
+    """Derives the container-mount path prefix (e.g. "/data") that
+    train-mvp-v6-persona.sh's docker run maps onto the real host data_root
+    (--volume "$data_root:/data"), by reading it back out of v6's own
+    already-established manifest rows -- v6_source_dataset/manifests/train.jsonl
+    already stores paths written in this container convention (e.g.
+    "/data/datasets/mvp-v6-decoupled/audio/foo.wav"), not real host-filesystem
+    absolute paths, since that's what the training container can actually see.
+    A path built from Path.resolve() on the host would be invisible inside the
+    container and every such row would silently fail to load during training.
+    """
+    if not v6_train_rows:
+        raise ValueError("v6 source train manifest is empty; cannot derive container path root")
+    sample_path = Path(v6_train_rows[0]["path"]).as_posix()
+    marker = f"/datasets/{v6_source_dataset.name}/"
+    index = sample_path.find(marker)
+    if index == -1:
+        raise ValueError(
+            "v6 source train manifest path does not match the expected "
+            f".../datasets/{v6_source_dataset.name}/... container-path convention: "
+            f"{sample_path!r}"
+        )
+    return Path(sample_path[:index]) / "datasets"
+
+
 def build_derived_dataset(
     *,
     v6_source_dataset: Path,
@@ -143,7 +168,12 @@ def build_derived_dataset(
     completely unchanged (still pointing at v6_source_dataset's own
     audio for actual training data loading -- that data isn't moving),
     plus the self-distillation corpus's rows, with paths rewritten to
-    point at output_directory/audio.
+    point at output_directory/audio -- written using the SAME
+    container-mount path convention ("/data/datasets/...") already used
+    by v6's own manifest rows (see _container_datasets_root), since
+    training reads these paths from inside a Docker container that only
+    has $data_root mounted at /data, not the real host filesystem paths
+    Path.resolve() would otherwise produce.
 
     output_directory/audio = a copy of v6_source_dataset's own audio
     contents plus the self-distillation corpus's WAV+JSON pairs, unified
@@ -182,6 +212,16 @@ def build_derived_dataset(
             shutil.copy2(source_file, audio_output_directory / source_file.name)
 
     probes_manifest = load_persona_manifest(probes_manifest_path)
+
+    v6_train_rows = [
+        json.loads(line)
+        for line in (v6_source_dataset / "manifests" / "train.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    container_datasets_root = _container_datasets_root(v6_train_rows, v6_source_dataset)
+    container_audio_directory = container_datasets_root / output_directory.name / "audio"
 
     self_distillation_train_rows = [
         json.loads(line)
@@ -229,7 +269,10 @@ def build_derived_dataset(
             json.dumps(annotated_alignment_payload, indent=2) + "\n", encoding="utf-8"
         )
         destination_alignment.chmod(0o600)
-        rewritten_rows.append({"path": str(destination_wav.resolve()), "duration": row["duration"]})
+        container_wav_path = container_audio_directory / destination_wav.name
+        rewritten_rows.append(
+            {"path": container_wav_path.as_posix(), "duration": row["duration"]}
+        )
 
     v6_dialogues_text = (v6_source_dataset / "dialogues.jsonl").read_text(encoding="utf-8")
     combined_dialogues_lines = [v6_dialogues_text.rstrip("\n")] if v6_dialogues_text.strip() else []
@@ -240,13 +283,6 @@ def build_derived_dataset(
         "\n".join(combined_dialogues_lines) + "\n", encoding="utf-8"
     )
 
-    v6_train_rows = [
-        json.loads(line)
-        for line in (v6_source_dataset / "manifests" / "train.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if line.strip()
-    ]
     combined_train_rows = v6_train_rows + rewritten_rows
     with (output_directory / "manifests" / "train.jsonl").open("w", encoding="utf-8") as handle:
         for row in combined_train_rows:
