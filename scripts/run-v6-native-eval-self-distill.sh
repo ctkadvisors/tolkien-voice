@@ -18,6 +18,14 @@ readonly eval_root="$data_root/eval-runs/$run_name"
 readonly config_dir="$eval_root/configs"
 readonly probe_audio_dir="$data_root/eval-inputs/$probe_set"
 readonly interruption_audio="$probe_audio_dir/barge-in.wav"
+# evals/persona/probes.yaml was expanded from 6 to 12 held-out probes per
+# character (commit 4ed1541), but eval-inputs/mvp-v1's recorded probe audio
+# was never backfilled to match -- only the original 6-per-character set has
+# a .wav file. The baseline's own eval-runs/mvp-v6-decoupled/report.json
+# (sample_pairs: 12 = 6+6) confirms it was run against that original set, so
+# this trimmed manifest is what makes this a fair, apples-to-apples
+# comparison against the baseline, not a scope reduction of convenience.
+readonly probes_manifest="$repository/evals/persona/probes-eval-mvp-v1.yaml"
 
 cd "$repository"
 mkdir -p "$eval_root" "$config_dir"
@@ -52,7 +60,9 @@ echo "=== render eval-runtime configs ===" >&2
   --run-root "$data_root/runs/mvp-v6-sauron-self-distill-v1-r64-384step"
 
 echo "=== prepare blinded assignment ===" >&2
-"$python_runtime" scripts/prepare-blind-eval.py --output-directory "$eval_root"
+"$python_runtime" scripts/prepare-blind-eval.py \
+  --manifest "$probes_manifest" \
+  --output-directory "$eval_root"
 base_arm=$("$python_runtime" -c "
 import json
 key = json.load(open('$eval_root/blind-key.json'))
@@ -103,6 +113,7 @@ collect_one() {
   running_config="$config"
   warm_up "$config"
   "$python_runtime" scripts/collect-native-arm.py \
+    --manifest "$probes_manifest" \
     --audio-dir "$probe_audio_dir" \
     --interruption-audio "$interruption_audio" \
     --raw-audio-dir "$raw_audio_dir" \
