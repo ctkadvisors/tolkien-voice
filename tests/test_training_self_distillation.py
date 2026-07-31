@@ -722,3 +722,112 @@ def test_build_self_distillation_example_aligns_words_by_direct_offset(
     # -- 2 words, 0.3s each.
     _assert_close(words[2][1], (1.9, 2.2))
     _assert_close(words[3][1], (2.2, 2.5))
+
+
+def test_build_self_distillation_example_translates_alignments_by_content_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reproduces PersonaPlex's sub-realtime generation (measured ~1.4x on
+    real hardware: 1 wall-clock second yields less than 1 second of actual
+    audio content) and proves alignment timestamps are translated by
+    content position (frame-counting), not by a raw wall-clock delta.
+
+    output_frames here are spaced 0.056s apart in wall-clock time -- 1.4x
+    FRAME_SECONDS (0.04s) -- so every FRAME_SECONDS of decoded content
+    takes 1.4x as long, in wall-clock terms, to arrive as it would under
+    1:1 realtime generation.
+
+    barge_in_seconds=1.0 lands after the 18th output_frame (17*0.056=0.952
+    < 1.0 <= 18*0.056=1.008), so barge_in_frame_index=18, matching the
+    extraction_start computed a few lines earlier in the same function.
+    delay_seconds=0.5 extracts exactly 0.5s of post-barge content, so the
+    placed assistant segment spans content-seconds [0.0, 0.5) relative to
+    barge-in -- i.e. wall-clock seconds [assistant_start_sec,
+    segment_end_sec) = [1.0, 1.5).
+
+    The single post_barge_text_frames chunk is timestamped at wall-clock
+    1.65s -- 0.65s after barge_in_seconds, comfortably past
+    barge_in_seconds + delay_seconds (1.5s) in wall-clock terms, which is
+    exactly the shape of chunk the old wall-clock-delta code mis-translated
+    (see docstring below for the pre-fix arithmetic). Translated by content
+    position, though, this chunk lands at real content-second 0.48 past
+    barge-in (12 frames * 0.04s, since 30 output_frames arrive before
+    1.65s and 30 - 18 = 12) -- i.e. wall-clock 1.48s -- safely inside the
+    placed segment, with no clamping required.
+    """
+    _install_fake_audio_modules(monkeypatch)
+
+    opening_wav = tmp_path / "opening.wav"
+    interruption_wav = tmp_path / "interruption.wav"
+    _write_mono_wav(opening_wav, silence_seconds=0.0, speech_seconds=1.0)
+    # Silence prefix is an exact multiple of FRAME_SECONDS so
+    # leading_silence_seconds returns exactly 0.08.
+    _write_mono_wav(interruption_wav, silence_seconds=0.08, speech_seconds=0.6)
+
+    raw_audio_path = tmp_path / "rollout-0.opus"
+    _write_opus_fixture(raw_audio_path, seconds=3.0, amplitude=0.2)
+
+    # Pre-fix (wall-clock-delta) arithmetic, for contrast -- NOT exercised
+    # by the fixed code, just documenting what it would have produced:
+    #   assistant_start_sec + (chunk_start - barge_in_seconds)
+    #   = 1.0 + (1.65 - 1.0) = 1.65
+    # -- which is past segment_end_sec (1.5) *and* past the WAV's own total
+    # duration (1.52, set by the interruption clip's own placement below),
+    # exactly the out-of-bounds failure mode the whole-branch review found.
+    old_buggy_translated_position = 1.0 + (1.65 - 1.0)
+
+    rollout = Rollout(
+        transcript="Actually never mind.",
+        yield_delay_reward=-0.3,
+        quality_reward=0.8,
+        delay_seconds=0.5,
+        raw_audio_path=raw_audio_path,
+        barge_in_seconds=1.0,
+        first_output_received_seconds=0.1,
+        last_output_received_seconds=3.1,
+        post_barge_text_frames=[(1.65, "Actually never mind.")],
+        # Spaced 0.056s apart (1.4x FRAME_SECONDS) -- sub-realtime content
+        # generation. 200 frames covers wall-clock up to 200*0.056=11.2s.
+        output_frames=[(round(i * 0.056, 6), 0.1) for i in range(200)],
+    )
+    output_directory = tmp_path / "corpus"
+
+    example = build_self_distillation_example(
+        rollout,
+        scenario_id="aragorn-lore-rangers",
+        character="aragorn",
+        opening_wav_path=opening_wav,
+        interruption_wav_path=interruption_wav,
+        system_prompt="<system>You are Aragorn.<system>",
+        split=Split.TRAIN,
+        output_directory=output_directory,
+    )
+
+    validate_rendered_examples([example])
+
+    # assistant_start_sec = interruption_start_sec + onset_offset
+    #                      = max(0.0, 1.0 - 0.08) + 0.08 = 1.0
+    # segment_end_sec = assistant_start_sec + delay_seconds = 1.5
+    assistant_start_sec = 1.0
+    segment_end_sec = assistant_start_sec + 0.5
+    assert old_buggy_translated_position > segment_end_sec
+    assert old_buggy_translated_position > example.duration_sec
+
+    payload = json.loads(example.alignment_path.read_text())
+    words = [(word, tuple(span)) for word, span, _ in payload["alignments"]]
+    assert [word for word, _ in words] == ["Actually", "never", "mind"]
+
+    # Every word's timestamps must land inside the placed assistant
+    # segment -- proving the content-position translation (not the old
+    # wall-clock delta) is what actually landed here.
+    for _, (word_start, word_end) in words:
+        assert assistant_start_sec <= word_start <= segment_end_sec
+        assert assistant_start_sec <= word_end <= segment_end_sec
+        assert word_end <= example.duration_sec
+
+    # And the concrete expected start: content delta = (30 - 18) frames
+    # * 0.04s = 0.48s past barge-in -> wall-clock 1.48s, well inside
+    # [1.0, 1.5) and nowhere near the buggy 1.65s the old code would have
+    # produced. (30 output_frames arrive before wall-clock 1.65s: frames
+    # 0..29, since 29*0.056=1.624 < 1.65 <= 30*0.056=1.68.)
+    assert abs(words[0][1][0] - 1.48) <= 1e-6

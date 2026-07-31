@@ -203,7 +203,7 @@ def build_self_distillation_example(
     opening_end_sec = len(opening_samples) / SAMPLE_RATE
     interruption_onset_sec = max(opening_end_sec, rollout.barge_in_seconds)
     interruption_start_sec = max(0.0, interruption_onset_sec - onset_offset)
-    assistant_start_sec = interruption_onset_sec
+    assistant_start_sec = interruption_start_sec + onset_offset
 
     interruption_end_sec = interruption_start_sec + len(interruption_samples) / SAMPLE_RATE
     assistant_end_sec = assistant_start_sec + len(post_barge_samples) / SAMPLE_RATE
@@ -244,8 +244,16 @@ def build_self_distillation_example(
     wav_path.chmod(0o600)
 
     segment_end_sec = assistant_start_sec + len(post_barge_samples) / SAMPLE_RATE
+
+    def _content_position_sec(wall_clock_seconds: float) -> float:
+        frame_index = sum(
+            1 for received_seconds, _ in rollout.output_frames
+            if received_seconds < wall_clock_seconds
+        )
+        return assistant_start_sec + (frame_index - barge_in_frame_index) * FRAME_SECONDS
+
     translated_frames = [
-        (assistant_start_sec + (chunk_start - rollout.barge_in_seconds), text)
+        (min(segment_end_sec, _content_position_sec(chunk_start)), text)
         for chunk_start, text in rollout.post_barge_text_frames
     ]
     alignments = _word_alignments_from_frames(
