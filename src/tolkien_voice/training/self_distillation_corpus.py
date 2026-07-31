@@ -196,7 +196,19 @@ def build_derived_dataset(
         destination_wav = audio_output_directory / source_wav_path.name
         destination_alignment = audio_output_directory / alignment_path.name
         shutil.copy2(source_wav_path, destination_wav)
-        shutil.copy2(alignment_path, destination_alignment)
+        # tolkien_voice.training.conditioning.annotate_system_prompts requires
+        # each alignment JSON to carry blueprint_hash == the DialogueBlueprint's
+        # own canonical_hash. The self-distillation pipeline (self_distillation.py)
+        # writes this alignment JSON before any DialogueBlueprint exists for it,
+        # so it never has this field -- write it now that the blueprint is built.
+        annotated_alignment_payload = {
+            **alignment_payload,
+            "blueprint_hash": blueprint.canonical_hash,
+        }
+        destination_alignment.write_text(
+            json.dumps(annotated_alignment_payload, indent=2) + "\n", encoding="utf-8"
+        )
+        destination_alignment.chmod(0o600)
         rewritten_rows.append({"path": str(destination_wav.resolve()), "duration": row["duration"]})
 
     v6_dialogues_text = (v6_source_dataset / "dialogues.jsonl").read_text(encoding="utf-8")

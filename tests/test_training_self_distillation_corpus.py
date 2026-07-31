@@ -7,7 +7,7 @@ import wave
 import pytest
 
 from tolkien_voice.evaluation import PersonaProbe
-from tolkien_voice.training.schema import CurriculumKind, Split, TimingKind
+from tolkien_voice.training.schema import CurriculumKind, DialogueBlueprint, Split, TimingKind
 from tolkien_voice.training.self_distillation_corpus import (
     build_self_distillation_blueprint,
     map_probe_category_to_curriculum,
@@ -264,6 +264,18 @@ def test_build_derived_dataset_merges_without_touching_the_source(tmp_path: Path
     assert Path(self_distill_row["path"]).is_file()
     v6_row = next(row for row in derived_train_rows if "self-distill" not in row["path"])
     assert Path(v6_row["path"]) == (v6_source / "audio" / "aragorn-existing-001.wav").resolve()
+
+    # The copied alignment JSON must carry blueprint_hash matching the
+    # synthesized blueprint's own canonical_hash -- conditioning.py's
+    # annotate_system_prompts raises on any mismatch (or absence), and the
+    # self-distillation pipeline never wrote this field itself since no
+    # DialogueBlueprint existed yet at that stage.
+    copied_alignment = json.loads(
+        Path(self_distill_row["path"]).with_suffix(".json").read_text()
+    )
+    assert copied_alignment["blueprint_hash"] == DialogueBlueprint.model_validate(
+        new_blueprint
+    ).canonical_hash
 
 
 def test_build_derived_dataset_raises_on_missing_v6_source_file(tmp_path: Path) -> None:
