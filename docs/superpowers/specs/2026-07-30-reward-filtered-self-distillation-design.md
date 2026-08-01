@@ -2,7 +2,19 @@
 
 Date: 2026-07-30
 
-Status: Proposed for implementation
+Status: **CLOSED 2026-08-01 — implemented, failed the release gate,
+approach abandoned.** The self-distillation-augmented adapters were
+trained (runs/mvp-v6-{aragorn,sauron}-self-distill-v1-r64-384step) and
+evaluated (eval-runs/mvp-v6-self-distill-v1/report.json): interruption
+p95 got slightly WORSE (4085ms vs baseline's 3843ms), and persona
+significance regressed into a new failure. Root cause of the whole
+direction: post-interruption yield behavior is set by duplex pretraining
+scale (millions of hours); a 20-example LoRA cannot move it — see
+`2026-07-31-proxy-barge-in-mute-design.md`, whose proxy-level fix
+achieved 93-191ms perceived interruption latency, live-verified. Kept as
+the record of why this path is closed; several timing/alignment passages
+below were superseded during implementation (see
+`.superpowers/sdd/progress.md`) and should not be treated as accurate.
 
 Repository: `ctkadvisors/tolkien-voice` (private)
 

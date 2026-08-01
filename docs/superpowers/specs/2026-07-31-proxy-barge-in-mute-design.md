@@ -2,7 +2,20 @@
 
 Date: 2026-07-31
 
-Status: Proposed for implementation
+Status: **SHIPPED and live-verified 2026-08-01.** Merged (428df3b),
+deployed to Spark, and measured through the real
+`POST /api/session` → `ws /api/session/{id}/chat` path: user-perceived
+interruption response of 93/183/191 ms across three live probes (raw
+model without the proxy: 2640-4085 ms). Two corrections to the text
+below, found after it was written: (1) the "Eval-harness update
+(required for this fix to be measurable at all)" section is obsolete —
+the fix WAS measured directly, without any eval-harness rework, and the
+follow-on routing spec was withdrawn (see
+`2026-08-01-eval-harness-real-session-routing-design.md`); (2) the Scope
+section lists the native-eval script updates as in scope, but they were
+deliberately split out at implementation time and never shipped — the
+merged work is BargeInDetector/BargeInGate, the api.py relay wiring, the
+client protocol action, and the worklet flush only.
 
 Repository: `ctkadvisors/tolkien-voice` (private)
 

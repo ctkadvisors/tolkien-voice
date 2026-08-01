@@ -2,7 +2,20 @@
 
 Date: 2026-08-01
 
-Status: Proposed for implementation
+Status: **WITHDRAWN 2026-08-01 — do not implement.** Three reasons: (1) it
+fixes at most 1 of the release gate's 4 failures — the other 3 are
+adapter-vs-base significance questions at n=12 that proxy routing cannot
+touch, so the gate still fails afterward; (2) the question the A/B
+apparatus exists to answer ("should an adapter go live?") was already
+answered "no" twice, and the standing recommendation is to ship
+base+prompts with no adapter at all; (3) the one thing routing would newly
+measure — perceived interruption latency through the real session path —
+was measured directly on 2026-08-01: 93/183/191 ms live probes through
+`POST /api/session` → `ws /api/session/{id}/chat` (see
+`.superpowers/sdd/progress.md`). The operational findings below (port
+8788 hardcoding, the flock double-acquisition deadlock, `web_dist=None`)
+remain accurate and useful reference if an app-launching harness is ever
+genuinely needed.
 
 Repository: `ctkadvisors/tolkien-voice` (private)
 

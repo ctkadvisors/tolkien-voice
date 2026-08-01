@@ -380,3 +380,43 @@ before continuing to iterate blind:
 
 No prompt-only demo, smoke checkpoint, or failed experimental adapter is
 authorized for production activation.
+
+## 2026-08-01 postscript: self-distill-v1 failed; direction closed; latency solved at the proxy
+
+Two entries this log was missing, recorded so no future session re-opens
+the wrong thread:
+
+**self-distill-v1 (reward-filtered self-distillation, 20 live-captured
+examples layered on the v6 corpus) trained cleanly and failed the gate
+harder than v6.** `eval-runs/mvp-v6-self-distill-v1/report.json`:
+interruption p95 4085ms (v6 baseline arm: 3843ms — slightly WORSE), lore
+still not significant, first-audio regression improved (+75% → +33%) but
+still fails, and persona significance — the one gate v6 passed —
+regressed into a new failure. n=12 pairs. That is two consecutive
+adapter generations, built two different ways, failing the same gates.
+
+**The user-facing latency problem was then solved without training.**
+Post-interruption yield timing is set by duplex pretraining scale
+(millions of hours of interleaved dual-stream audio — the Moshi lineage
+this project's own reward code cites); no homelab-scale LoRA moves it.
+A VAD-triggered barge-in mute in the app's own relay proxy
+(`src/tolkien_voice/barge_in.py` + `api.py`, spec
+`docs/superpowers/specs/2026-07-31-proxy-barge-in-mute-design.md`) now
+withholds assistant audio the moment sustained user speech is detected
+and flushes client playback. Live-measured through the real
+`POST /api/session` → `ws /api/session/{id}/chat` path on 2026-08-01:
+**93 / 183 / 191 ms** perceived interruption response across three
+probes (raw model direct: 2640–4085 ms).
+
+**Consequences for this log's framing:**
+- The "release gates" above measured the raw model over a direct
+  websocket — a layer no user experiences anymore. The ≤1000ms
+  interruption budget, applied to what users actually hear, is cleared
+  by 5–10x. Treat `run-v6-native-eval.sh`/`report-ab-eval.py` as
+  historical experiment tooling, not a deployment gate.
+- The adapter-vs-base question is answered: adapters do not beat
+  base+prompts here. The shipped system is the base PersonaPlex model
+  with per-character `text_prompt`/`voice_prompt` and the proxy mute.
+- The eval-harness rework proposed to make the gate "see" the proxy fix
+  was withdrawn unimplemented (see
+  `docs/superpowers/specs/2026-08-01-eval-harness-real-session-routing-design.md`).

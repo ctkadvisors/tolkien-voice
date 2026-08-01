@@ -1,3 +1,9 @@
+# NOTE: the aragorn/sauron probe expansion (6 -> 12 each, commit 4ed1541)
+# never backfilled recorded audio -- eval-inputs/mvp-v1 on Spark has WAVs
+# for only the original 6 per character. Native-eval runs must use
+# probes-eval-mvp-v1.yaml (the trimmed manifest matching recorded audio);
+# running a native eval against THIS file fails with FileNotFoundError
+# mid-run, or worse, produces numbers incomparable with prior reports.
 version: 1
 held_out: true
 characters:
