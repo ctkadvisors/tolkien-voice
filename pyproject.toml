@@ -11,6 +11,7 @@ dependencies = [
   "pydantic-settings>=2.10,<3",
   "pyyaml>=6.0,<7",
   "ruamel-yaml>=0.18,<1",
+  "sphn==0.1.12",
   "uvicorn[standard]>=0.35,<1",
   "websockets>=15,<16",
 ]
@@ -25,7 +26,6 @@ dev = [
 evaluation = [
   "aiohttp>=3.10.5,<3.11",
   "numpy>=1.26,<2.2",
-  "sphn==0.1.12",
 ]
 
 [project.scripts]

@@ -3,6 +3,7 @@ import { useSocketContext } from "../SocketContext";
 import { decodeMessage } from "../../../protocol/encoder";
 import { useMediaContext } from "../MediaContext";
 import { createDecoderWorker, initDecoder, getPrewarmedWorker } from "../../../decoder/decoderWorker";
+import { shouldFlushPlayback } from "../../../protocol/controlActions";
 
 export type AudioStats = {
   playedAudioDuration: number;
@@ -115,6 +116,8 @@ export const useServerAudio = ({setGetAudioStats}: useServerAudioArgs) => {
         decodeAudio(message.data);
         //For stats purposes for now
         totalAudioMessages.current++;
+      } else if (shouldFlushPlayback(message)) {
+        worklet.current.port.postMessage({ type: "reset" });
       }
     },
     [decodeAudio],

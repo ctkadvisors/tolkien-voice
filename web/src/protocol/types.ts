@@ -55,6 +55,7 @@ export const CONTROL_MESSAGES_MAP = {
   endTurn: 0b00000001,
   pause: 0b00000010,
   restart: 0b00000011,
+  bargeIn: 0b00000100,
 } as const;
 
 export type CONTROL_MESSAGE = keyof typeof CONTROL_MESSAGES_MAP;
