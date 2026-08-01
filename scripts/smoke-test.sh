@@ -58,7 +58,7 @@ artifact_count() {
 artifacts_before=$(artifact_count)
 readonly artifacts_before
 
-if [[ ! -d "$cache_root/models--nvidia--personaplex-7b-v1" ]]; then
+if [[ ! -d "$cache_root/hub/models--nvidia--personaplex-7b-v1" ]]; then
   echo "SKIP: PersonaPlex weights are not cached; non-model smoke checks passed."
   exit 0
 fi
