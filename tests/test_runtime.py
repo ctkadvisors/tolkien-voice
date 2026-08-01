@@ -49,7 +49,7 @@ async def test_start_uses_exact_private_docker_contract(tmp_path: Path) -> None:
 
     await runtime.start()
 
-    command = runner.calls[0][0]
+    command = next(call[0] for call in runner.calls if call[0][:2] == ("docker", "run"))
     assert command == (
         "docker",
         "run",
@@ -112,6 +112,7 @@ async def test_recover_stops_only_preexisting_managed_container(tmp_path: Path) 
             "tolkien-voice-personaplex",
         ),
         ("docker", "stop", "--time", "20", "tolkien-voice-personaplex"),
+        ("docker", "rm", "tolkien-voice-personaplex"),
     ]
     assert all("unrelated-container" not in command for command in commands)
 
@@ -191,6 +192,37 @@ async def test_stop_is_idempotent(tmp_path: Path) -> None:
 
     stops = [call for call in runner.calls if call[0][:2] == ("docker", "stop")]
     assert len(stops) == 1
+
+
+@pytest.mark.asyncio
+async def test_session_cycle_removes_container_so_next_start_succeeds(tmp_path: Path) -> None:
+    # Live failure 2026-08-01: docker run has no --rm and stop never removed
+    # the exited container, so its name squatted the next `docker run --name`
+    # and the SECOND session of any app lifetime always failed with
+    # "PersonaPlex failed to start".
+    settings = settings_for(tmp_path)
+    install_fake_token(settings)
+    runner = FakeCommandRunner()
+    runtime = PersonaPlexRuntime(settings, runner=runner, http=FakeHttpClient([200, 200]))
+
+    await runtime.start()
+    await runtime.stop()
+    await runtime.start()
+
+    commands = [call[0] for call in runner.calls]
+    run_indexes = [i for i, c in enumerate(commands) if c[:2] == ("docker", "run")]
+    assert len(run_indexes) == 2
+    for index in run_indexes:
+        assert commands[index - 1] == (
+            "docker",
+            "rm",
+            "--force",
+            "tolkien-voice-personaplex",
+        ), "every docker run must be preceded by removing any leftover container"
+    stop_index = next(i for i, c in enumerate(commands) if c[:2] == ("docker", "stop"))
+    assert commands[stop_index + 1] == ("docker", "rm", "tolkien-voice-personaplex"), (
+        "stop must remove the exited container rather than leaving it to squat the name"
+    )
 
 
 def test_secret_redaction() -> None:

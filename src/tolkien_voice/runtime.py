@@ -74,6 +74,10 @@ class PersonaPlexRuntime:
     async def start(self, character_id: str | None = None) -> None:
         self._prepare_directories()
         self._validate_token()
+        # A leftover container (exited after a prior session, or orphaned by a
+        # crash) squats the fixed --name and makes docker run fail -- remove
+        # it unconditionally before starting; failure (name absent) is fine.
+        await self._remove_command(force=True)
         result = await self.runner.run(self._docker_run_command(character_id), timeout=60)
         if result.exit_code != 0:
             raise RuntimeStartError(
@@ -281,3 +285,16 @@ class PersonaPlexRuntime:
             ],
             timeout=30,
         )
+        # docker stop leaves the exited container behind, and its fixed name
+        # would block the next docker run -- remove it as part of stopping.
+        # (Not --rm on docker run: startup-failure diagnostics read
+        # `docker logs` from the exited container before stop() runs, and
+        # --rm would delete it out from under that.)
+        await self._remove_command(force=False)
+
+    async def _remove_command(self, *, force: bool) -> None:
+        command = ["docker", "rm"]
+        if force:
+            command.append("--force")
+        command.append(self.settings.personaplex_container)
+        await self.runner.run(command, timeout=30)

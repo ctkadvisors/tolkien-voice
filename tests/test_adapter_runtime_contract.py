@@ -145,7 +145,7 @@ async def test_runtime_mounts_only_a_verified_allowlisted_adapter(tmp_path: Path
 
     await runtime.start("aragorn")
 
-    command = runner.calls[0][0]
+    command = next(call[0] for call in runner.calls if call[0][:2] == ("docker", "run"))
     assert f"type=bind,src={adapter},dst=/adapter/lora.safetensors,readonly" in command
     assert "TOLKIEN_VOICE_LORA_WEIGHT=/adapter/lora.safetensors" in command
     assert f"TOLKIEN_VOICE_LORA_SHA256={digest}" in command
@@ -202,7 +202,7 @@ async def test_runtime_selects_verified_adapter_by_character(tmp_path: Path) -> 
 
     await runtime.start("aragorn")
 
-    command = runner.calls[0][0]
+    command = next(call[0] for call in runner.calls if call[0][:2] == ("docker", "run"))
     assert f"type=bind,src={adapter},dst=/adapter/lora.safetensors,readonly" in command
 
 
@@ -224,7 +224,8 @@ async def test_untrained_character_uses_base_when_bank_has_no_entry(tmp_path: Pa
 
     await runtime.start("gandalf")
 
-    assert "/adapter/lora.safetensors" not in " ".join(runner.calls[0][0])
+    run_command = next(call[0] for call in runner.calls if call[0][:2] == ("docker", "run"))
+    assert "/adapter/lora.safetensors" not in " ".join(run_command)
 
 
 def test_server_and_entrypoint_expose_adapter_identity() -> None:
