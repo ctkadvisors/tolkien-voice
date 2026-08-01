@@ -55,8 +55,8 @@ artifact_count() {
     \( -iname '*.wav' -o -iname '*.webm' -o -iname '*transcript*' \) \
     -not -path "$data_root/eval-runs/*" -print | wc -l | tr -d ' '
 }
-readonly artifacts_before
 artifacts_before=$(artifact_count)
+readonly artifacts_before
 
 if [[ ! -d "$cache_root/models--nvidia--personaplex-7b-v1" ]]; then
   echo "SKIP: PersonaPlex weights are not cached; non-model smoke checks passed."
@@ -120,8 +120,8 @@ run_session_cycle 1
 run_session_cycle 2
 trap - EXIT
 
-readonly artifacts_after
 artifacts_after=$(artifact_count)
+readonly artifacts_after
 [[ "$artifacts_after" == "$artifacts_before" ]] || {
   echo "Unexpected audio or transcript artifact appeared under $data_root." >&2
   exit 1
