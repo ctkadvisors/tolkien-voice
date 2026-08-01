@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from typing import Protocol, Sequence
 
 FRAME_SECONDS = 0.04
 
@@ -57,3 +57,50 @@ class BargeInDetector:
                 self.active = True
                 self._run_length = 0
         return self.active != was_active
+
+
+BARGE_IN_CONTROL_BYTE = 4
+
+
+class OpusPcmReader(Protocol):
+    def append_bytes(self, payload: bytes) -> None: ...
+
+    def read_pcm(self) -> Sequence[float]: ...
+
+
+class BargeInGate:
+    """Owns one connection's Opus-decode state and BargeInDetector,
+    translating incoming Opus payloads from the user's channel into
+    activation/deactivation decisions for that connection.
+    """
+
+    def __init__(
+        self,
+        *,
+        reader: OpusPcmReader,
+        detector: BargeInDetector,
+        sample_rate: int,
+    ) -> None:
+        self._reader = reader
+        self._detector = detector
+        self._frame_samples = round(sample_rate * FRAME_SECONDS)
+
+    @property
+    def muting(self) -> bool:
+        return self._detector.active
+
+    def observe_user_audio(self, opus_payload: bytes) -> bool:
+        """Decodes one Opus payload from the user's channel and feeds its
+        RMS-per-frame content into the detector. Returns True exactly when
+        this call causes the detector to activate.
+        """
+        self._reader.append_bytes(opus_payload)
+        decoded = list(self._reader.read_pcm())
+        activated = False
+        for offset in range(0, len(decoded), self._frame_samples):
+            chunk = decoded[offset : offset + self._frame_samples]
+            if not chunk:
+                continue
+            if self._detector.append(frame_rms(chunk)) and self._detector.active:
+                activated = True
+        return activated

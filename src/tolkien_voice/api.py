@@ -7,8 +7,10 @@ from urllib.parse import urlencode, urlparse, urlunparse
 from fastapi import APIRouter, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
+import sphn
 import websockets
 
+from tolkien_voice.barge_in import BARGE_IN_CONTROL_BYTE, BargeInDetector, BargeInGate
 from tolkien_voice.characters import (
     CharacterRegistry,
     UnknownCharacterError,
@@ -18,6 +20,7 @@ from tolkien_voice.session import SessionConflictError, SessionController
 
 
 MAX_FRAME_BYTES = 1024 * 1024
+SAMPLE_RATE = 24_000
 
 
 class StartSessionRequest(BaseModel):
@@ -119,11 +122,21 @@ def create_api_router(
                 await websocket.send_bytes(first)
                 await controller.mark_connected(session_id)
                 marked_connected = True
+                gate = BargeInGate(
+                    reader=sphn.OpusStreamReader(SAMPLE_RATE),
+                    detector=BargeInDetector(
+                        activation_threshold=0.02,
+                        activation_sustained_frames=3,
+                        deactivation_threshold=0.015,
+                        deactivation_sustained_frames=12,
+                    ),
+                    sample_rate=SAMPLE_RATE,
+                )
                 browser_to_upstream = asyncio.create_task(
-                    _browser_to_upstream(websocket, upstream)
+                    _browser_to_upstream(websocket, upstream, gate)
                 )
                 upstream_to_browser = asyncio.create_task(
-                    _upstream_to_browser(websocket, upstream)
+                    _upstream_to_browser(websocket, upstream, gate)
                 )
                 done, pending = await asyncio.wait(
                     {browser_to_upstream, upstream_to_browser},
@@ -151,7 +164,9 @@ def create_api_router(
     return router
 
 
-async def _browser_to_upstream(websocket: WebSocket, upstream: object) -> None:
+async def _browser_to_upstream(
+    websocket: WebSocket, upstream: object, gate: BargeInGate
+) -> None:
     while True:
         message = await websocket.receive()
         if message["type"] == "websocket.disconnect":
@@ -163,14 +178,29 @@ async def _browser_to_upstream(websocket: WebSocket, upstream: object) -> None:
         if len(payload) > MAX_FRAME_BYTES:
             await websocket.close(code=1009, reason="frame too large")
             return
+        if payload and payload[0] == 1:
+            try:
+                activated = gate.observe_user_audio(payload[1:])
+            except Exception:
+                # A single undecodable Opus payload must not break the
+                # conversation -- VAD is a passive behavior layered on
+                # top of the relay, not a new hard requirement for the
+                # relay itself to keep functioning.
+                activated = False
+            if activated:
+                await websocket.send_bytes(bytes([0x03, BARGE_IN_CONTROL_BYTE]))
         await upstream.send(payload)  # type: ignore[attr-defined]
 
 
-async def _upstream_to_browser(websocket: WebSocket, upstream: object) -> None:
+async def _upstream_to_browser(
+    websocket: WebSocket, upstream: object, gate: BargeInGate
+) -> None:
     async for payload in upstream:  # type: ignore[attr-defined]
         if not isinstance(payload, bytes):
             await websocket.close(code=1011, reason="invalid upstream frame")
             return
+        if payload and payload[0] == 1 and gate.muting:
+            continue
         await websocket.send_bytes(payload)
 
 

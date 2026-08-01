@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from tolkien_voice.barge_in import BargeInDetector, frame_rms
+from tolkien_voice.barge_in import BARGE_IN_CONTROL_BYTE, BargeInDetector, BargeInGate, frame_rms
 
 
 def test_frame_rms_of_silence_is_zero() -> None:
@@ -92,3 +92,66 @@ def test_detector_rejects_non_positive_construction_values() -> None:
             deactivation_threshold=0.015,
             deactivation_sustained_frames=12,
         )
+
+
+class _FakeReader:
+    def __init__(self) -> None:
+        self.appended: list[bytes] = []
+        self.next_pcm: list[float] = []
+
+    def append_bytes(self, payload: bytes) -> None:
+        self.appended.append(payload)
+
+    def read_pcm(self) -> list[float]:
+        return self.next_pcm
+
+
+def _gate(reader: "_FakeReader") -> BargeInGate:
+    return BargeInGate(
+        reader=reader,
+        detector=BargeInDetector(
+            activation_threshold=0.02,
+            activation_sustained_frames=3,
+            deactivation_threshold=0.015,
+            deactivation_sustained_frames=12,
+        ),
+        sample_rate=24_000,
+    )
+
+
+def test_gate_reports_activation_on_the_frame_that_crosses_the_threshold() -> None:
+    reader = _FakeReader()
+    gate = _gate(reader)
+    frame_samples = round(24_000 * 0.04)
+    reader.next_pcm = [0.03] * frame_samples
+
+    assert gate.observe_user_audio(b"opus-1") is False
+    assert gate.observe_user_audio(b"opus-2") is False
+    assert gate.observe_user_audio(b"opus-3") is True
+    assert gate.muting is True
+    assert reader.appended == [b"opus-1", b"opus-2", b"opus-3"]
+
+
+def test_gate_processes_multiple_frames_decoded_from_one_payload() -> None:
+    reader = _FakeReader()
+    gate = _gate(reader)
+    frame_samples = round(24_000 * 0.04)
+    reader.next_pcm = [0.03] * (frame_samples * 3)
+
+    assert gate.observe_user_audio(b"opus") is True
+    assert gate.muting is True
+
+
+def test_gate_stays_quiet_below_the_activation_threshold() -> None:
+    reader = _FakeReader()
+    gate = _gate(reader)
+    frame_samples = round(24_000 * 0.04)
+    reader.next_pcm = [0.01] * frame_samples
+
+    assert gate.observe_user_audio(b"opus-1") is False
+    assert gate.observe_user_audio(b"opus-2") is False
+    assert gate.muting is False
+
+
+def test_barge_in_control_byte_matches_the_web_protocol_value() -> None:
+    assert BARGE_IN_CONTROL_BYTE == 4
