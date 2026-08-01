@@ -58,9 +58,9 @@ export const decodeMessage = (data: Uint8Array): WSMessage => {
         key => CONTROL_MESSAGES_MAP[key as CONTROL_MESSAGE] === payload[0],
       ) as CONTROL_MESSAGE | undefined;
 
-      //TODO: log this and don't throw
       if (!action) {
-        throw new Error("Unknown control message");
+        console.warn("Unknown control message action byte:", payload[0]);
+        return { type: "ping" };
       }
       return {
         type: "control",
