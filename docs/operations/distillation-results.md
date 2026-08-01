@@ -420,3 +420,13 @@ probes (raw model direct: 2640–4085 ms).
 - The eval-harness rework proposed to make the gate "see" the proxy fix
   was withdrawn unimplemented (see
   `docs/superpowers/specs/2026-08-01-eval-harness-real-session-routing-design.md`).
+
+**Release gate v2 (supersedes the A/B gates above):** (1) `uv run pytest`
+and `cd web && npx vitest run && npx tsc --noEmit` green; (2)
+`scripts/smoke-test.sh` passes on Spark — now including two consecutive
+full session start/stop cycles, since the worst shipped production bug
+("every second session fails") was invisible to any single-cycle check;
+(3) after any audio-path change, one human acceptance run
+(docs/operations/acceptance-test.md, trimmed to one character + a
+spot-check) with a real microphone in a real room, watching specifically
+for spurious barge-in mutes and missed activations. No statistics.

@@ -63,48 +63,62 @@ if [[ ! -d "$cache_root/models--nvidia--personaplex-7b-v1" ]]; then
   exit 0
 fi
 
-session_json=$(curl -fsS -X POST "$controller/api/session" \
-  -H 'Content-Type: application/json' \
-  --data '{"character_id":"gandalf","voice_id":"NATM1.pt"}')
-session_id=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["session_id"])' \
-  <<<"$session_json")
-
+session_id=""
 cleanup_session() {
-  curl -fsS -X DELETE "$controller/api/session/$session_id" >/dev/null 2>&1 || true
+  if [[ -n "$session_id" ]]; then
+    curl -fsS -X DELETE "$controller/api/session/$session_id" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup_session EXIT
 
-state=waiting_for_lease
-for _attempt in {1..180}; do
-  state=$(curl -fsS "$controller/api/session" \
-    | python3 -c 'import json, sys; print(json.load(sys.stdin)["state"])')
-  case "$state" in
-    ready) break ;;
-    failed|idle)
-      echo "Synthetic voice session failed before readiness: $state" >&2
-      exit 1
-      ;;
-  esac
-  sleep 5
-done
-[[ "$state" == ready ]] || {
-  echo "Synthetic voice session did not reach ready." >&2
-  exit 1
+run_session_cycle() {
+  local cycle=$1
+  local session_json state
+  session_json=$(curl -fsS -X POST "$controller/api/session" \
+    -H 'Content-Type: application/json' \
+    --data '{"character_id":"gandalf","voice_id":"NATM1.pt"}')
+  session_id=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["session_id"])' \
+    <<<"$session_json")
+
+  state=waiting_for_lease
+  for _attempt in {1..180}; do
+    state=$(curl -fsS "$controller/api/session" \
+      | python3 -c 'import json, sys; print(json.load(sys.stdin)["state"])')
+    case "$state" in
+      ready) break ;;
+      failed|idle)
+        echo "Voice session cycle $cycle failed before readiness: $state" >&2
+        exit 1
+        ;;
+    esac
+    sleep 5
+  done
+  [[ "$state" == ready ]] || {
+    echo "Voice session cycle $cycle did not reach ready." >&2
+    exit 1
+  }
+
+  curl -fsS -X DELETE "$controller/api/session/$session_id" >/dev/null
+  session_id=""
+
+  for _attempt in {1..30}; do
+    if ! docker inspect "$runtime_container" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  if docker inspect "$runtime_container" >/dev/null 2>&1; then
+    echo "PersonaPlex container remained after cycle $cycle DELETE cleanup." >&2
+    exit 1
+  fi
 }
 
-curl -fsS -X DELETE "$controller/api/session/$session_id" >/dev/null
+# Two consecutive full cycles, deliberately: the worst production bug this
+# service has shipped ("every SECOND session fails -- the exited container
+# squats the fixed docker --name") is invisible to any single-cycle check.
+run_session_cycle 1
+run_session_cycle 2
 trap - EXIT
-
-for _attempt in {1..30}; do
-  if ! docker inspect "$runtime_container" >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
-done
-if docker inspect "$runtime_container" >/dev/null 2>&1; then
-  echo "PersonaPlex container remained after DELETE cleanup." >&2
-  exit 1
-fi
 
 readonly artifacts_after
 artifacts_after=$(artifact_count)

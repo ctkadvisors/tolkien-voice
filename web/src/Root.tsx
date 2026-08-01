@@ -69,6 +69,15 @@ export function App() {
     return <ConversationPage session={session} onEnd={handleEnd} />;
   }
 
+  // A failed activation bounces back to idle with the failure recorded on the
+  // session payload (session.py's _last_failure) -- surface it instead of
+  // silently resetting to the default blurb.
+  const sessionFailure = session.error
+    ? session.blocking_owner
+      ? `${session.error} (in use by ${session.blocking_owner.name})`
+      : session.error
+    : null;
+
   return (
     <CharacterSelect
       characters={characters}
@@ -81,7 +90,7 @@ export function App() {
       onVoiceChange={setSelectedVoiceId}
       onStart={() => void handleStart()}
       disabled={!characters.length}
-      statusMessage={error ?? undefined}
+      statusMessage={error ?? sessionFailure ?? undefined}
     />
   );
 }
