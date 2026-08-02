@@ -115,3 +115,24 @@ def test_rejects_unsafe_runtime_values(field: str, value: object) -> None:
 
     with pytest.raises(ValueError):
         RuntimeSettings.model_validate(values)
+
+
+def test_rl_seamless_base_repo_is_allowlisted(tmp_path: Path) -> None:
+    # Stage 0 of the language program serves kyutai/personaplex-rl-seamless
+    # (same architecture, RL-tuned turn-taking) as the production base.
+    values = {
+        "controller_host": "127.0.0.1",
+        "controller_port": 8788,
+        "personaplex_url": "http://127.0.0.1:8998",
+        "personaplex_container": "tolkien-voice-personaplex",
+        "personaplex_image": "tolkien-voice/personaplex:3428dfd",
+        "hf_repo": "kyutai/personaplex-rl-seamless",
+        "disconnect_idle_seconds": 300,
+        "lease_wait_seconds": 900,
+        "runtime_start_timeout_seconds": 900,
+        "llama_swap_url": "http://127.0.0.1:9090",
+        "lock_path": tmp_path / "big-model.lock",
+        "owner_path": tmp_path / "big-model-owner.json",
+        "data_root": tmp_path / "data",
+    }
+    assert RuntimeSettings.model_validate(values).hf_repo == "kyutai/personaplex-rl-seamless"

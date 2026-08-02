@@ -65,6 +65,8 @@ async def test_start_uses_exact_private_docker_contract(tmp_path: Path) -> None:
         "--env",
         "HF_HOME=/cache/huggingface",
         "--env",
+        "TOLKIEN_VOICE_HF_REPO=nvidia/personaplex-7b-v1",
+        "--env",
         "NO_TORCH_COMPILE=1",
         "--mount",
         f"type=bind,src={settings.data_root}/cache/huggingface,dst=/cache/huggingface",

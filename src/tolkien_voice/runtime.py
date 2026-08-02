@@ -236,6 +236,8 @@ class PersonaPlexRuntime:
             "--env",
             "HF_HOME=/cache/huggingface",
             "--env",
+            f"TOLKIEN_VOICE_HF_REPO={self.settings.hf_repo}",
+            "--env",
             "NO_TORCH_COMPILE=1",
             "--mount",
             f"type=bind,src={self.cache_path},dst=/cache/huggingface",

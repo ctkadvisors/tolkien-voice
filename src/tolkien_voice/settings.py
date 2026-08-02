@@ -10,7 +10,13 @@ import yaml
 
 
 ENV_PREFIX = "TOLKIEN_VOICE_"
-ALLOWED_HF_REPOS = {"nvidia/personaplex-7b-v1"}
+ALLOWED_HF_REPOS = {
+    "nvidia/personaplex-7b-v1",
+    # Same architecture, GRPO-RL-tuned by Kyutai for turn-taking/interruption
+    # (arXiv 2606.11167) -- drop-in for the serving stack. Stage 0 of the
+    # language program swaps production to this base.
+    "kyutai/personaplex-rl-seamless",
+}
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
