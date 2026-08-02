@@ -430,3 +430,18 @@ full session start/stop cycles, since the worst shipped production bug
 (docs/operations/acceptance-test.md, trimmed to one character + a
 spot-check) with a real microphone in a real room, watching specifically
 for spurious barge-in mutes and missed activations. No statistics.
+
+## 2026-08-01 Stage 0 (language program): base swapped to kyutai/personaplex-rl-seamless
+
+Production now serves `kyutai/personaplex-rl-seamless` (June 2026) — the
+same PersonaPlex architecture GRPO-RL-tuned by Kyutai on real two-party
+conversation for turn-taking/pause/backchannel/interruption (arXiv
+2606.11167, the method this project's own reward code imitated at 20-example
+scale). Image `fa8d8a4` adds a repo passthrough (allowlisted at controller
+AND entrypoint).
+
+Raw-model interruption yield, measured direct on :8998 (no proxy),
+aragorn card, three probes: **2091 / 2401 / 1191 ms** — vs 2640–4085 ms
+for personaplex-7b-v1 across this log's prior measurements. The RL roughly
+halves the model's own yield latency; the proxy barge-in mute remains the
+user-facing guarantee (93–191 ms perceived).
