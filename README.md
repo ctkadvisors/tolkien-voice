@@ -48,3 +48,9 @@ PersonaPlex startup additionally requires NVIDIA GPU Docker access and the gated
 The install script is fail-closed and must run as `chrisknuteson` on `spark-1250`. It never unloads an active heavy model, stops `vllm_embed`, resets all Tailscale Serve state, or requests a credential in chat. Model weights and the credential remain prerequisites; source installation alone does not produce a working speech session.
 
 The current Spark has the pinned checkpoint cached and has passed native binary handshakes for both Gandalf and Sauron. See the [measured baseline](docs/operations/baseline-results.md) for cold/warm startup and memory results. Human conversational latency and persona quality are intentionally not claimed until the private speech acceptance run is completed.
+
+## License
+
+[MIT](LICENSE) © 2026 Chris Knuteson. Keep the copyright and license notice in copies or substantial portions.
+
+`web/` is adapted from the upstream PersonaPlex client and keeps its own [MIT license](web/LICENSE). The `vendor/` submodules carry their upstream licenses, and the `nvidia/personaplex-7b-v1` weights are distributed separately under the NVIDIA Open Model License. Tolkien and the character names belong to their owners; this is an unofficial fan project.
